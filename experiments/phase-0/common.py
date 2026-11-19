@@ -42,7 +42,7 @@ image = (
 _T0 = time.time()
 # Connect tokens and WebSocket tickets travel in URLs, and an exception message
 # can quote the URL. Everything logged or saved goes through redact().
-_SECRET = re.compile(r"(_modal_connect_token=|wsTicket=)[^&\s'\"]+|sk-ant-[A-Za-z0-9_-]+")
+_SECRET = re.compile(r"(_modal_connect_token=|wsTicket=)[^&\s'\"\\]+|sk-ant-[A-Za-z0-9_-]+")
 
 
 def redact(text: str) -> str:

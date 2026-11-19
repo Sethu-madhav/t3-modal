@@ -11,8 +11,8 @@ Answers, from implementation.md §18:
        pasting the redirect URL, and does it survive a disk sleep?
 
 Steps, each a separate run so the user can act in between:
-  start <token-file>  create the sandbox, check Claude Code, open the pairing link
-  sleep-wake          disk snapshot, end the sandbox, fresh boot, open a new pairing link
+  start <token-file>  create the sandbox, check Claude Code, print the pairing link
+  sleep-wake          disk snapshot, end the sandbox, fresh boot, print a new pairing link
   link                print a pairing link to paste by hand
   stop                end every exp07 sandbox
 

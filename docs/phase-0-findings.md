@@ -1,6 +1,6 @@
 # Phase 0 findings
 
-Results of the Phase 0 experiments, measured on the user's Modal Starter workspace on 2026-11-18 with Modal SDK 1.6.4 and T3 0.1.10. Experiment 7 used T3 0.1.11-nightly. The scripts and raw JSON results live on the `phase-0` branch under `experiments/phase-0/`. What docs and source code say is in [phase-0-research.md](phase-0-research.md).
+Results of the Phase 0 experiments, measured on the user's Modal Starter workspace on 2026-11-18 with Modal SDK 1.6.4 and T3 0.1.10. Experiment 7 used T3 0.1.11-nightly. The scripts and raw JSON results are in `experiments/phase-0/`. What docs and source code say is in [phase-0-research.md](phase-0-research.md).
 
 ## Summary
 
@@ -9,7 +9,7 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 5 | Do T3 and other processes survive a memory snapshot and restore? | Yes. Same PIDs, same boot ID, and the kernel's uptime continues. T3 answered 1.7 s after the restore call | Memory sleep works as §4.4 describes |
 | 5 | Does `snapshot_filesystem` work on a `runtime="vm"` sandbox? | Yes, in 3.8 s on a small disk. A default-runtime sandbox booted from that image | One runtime for every machine: VM |
 | 5 | Does a restore get a new timeout? | Yes. The restored sandbox ended 366 s after the restore, against a 360 s timeout | Rollover counts from the latest wake, as §9.6 assumes |
-| 2 | How long does a wake take? | Memory restore: 1.7 s to T3 answering. Fresh boot from a cached image: 4.4 s | Much faster than the 30 s the plan allowed |
+| 2 | How long does a wake take? | Memory restore: 1.7 s to T3 answering. Fresh boot from a cached image on the VM runtime: 4.2 to 11.0 s, 5.1 s typical | Much faster than the 30 s the plan allowed |
 | 8 | What does an ended sandbox's tunnel answer? | No HTTP answer. The connection closes with nothing sent, both 4 s and 24 s after the end | The proxy treats a closed connection as "maybe asleep" and asks the controller (§9.4) |
 | 16 | Does T3 work through a connect-token URL? | Yes, for HTTP and the WebSocket. Without the token Modal answers 401 | Use connect-token URLs instead of tunnels (see below) |
 | 7 | Do idle WebSockets stay open? | Yes, 75 s idle through both routes, and a ping still worked | No keepalive needed at this scale. A longer idle test comes later |
