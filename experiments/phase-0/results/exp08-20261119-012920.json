@@ -1,0 +1,71 @@
+{
+  "experiment": "exp08_connect_tokens",
+  "steps": {
+    "urls": {
+      "t3_and_daemon_url_differ": true,
+      "second_3773_url_same": true
+    },
+    "t3_ready_via_connect_url_s": 5.2,
+    "initial": {
+      "t3_token_a": 200,
+      "t3_token_b": 200,
+      "daemon_token": 200,
+      "t3_no_token": 401,
+      "daemon_no_token": 401,
+      "daemon_token_on_t3_url": 403,
+      "t3_token_on_daemon_url": 403
+    },
+    "ws_ticket_status": 200,
+    "ws_idle_30m": {
+      "opened": true,
+      "idle_s": 1800,
+      "frames_received": 0,
+      "pong_after_idle": true
+    },
+    "lifetime": [
+      {
+        "minutes": 30,
+        "t3_token_a": 0,
+        "t3_token_b": 200,
+        "daemon_token": 200
+      },
+      {
+        "minutes": 60,
+        "t3_token_a": 200,
+        "t3_token_b": 200,
+        "daemon_token": 200
+      },
+      {
+        "minutes": 90,
+        "t3_token_a": 200,
+        "t3_token_b": 200,
+        "daemon_token": 200
+      }
+    ],
+    "after_snapshot_old_url": {
+      "t3_token_a": 404,
+      "t3_token_b": 404,
+      "daemon_token": 404
+    },
+    "restore": {
+      "t3_ready_s": 0.9,
+      "same_environment": true,
+      "new_url_same_as_old": false,
+      "new_token_new_url": 200,
+      "old_token_new_url": 401,
+      "old_token_old_url": 404
+    },
+    "after_terminate": [
+      {
+        "after_s": 2,
+        "status": 404,
+        "body": "Sandbox not found"
+      },
+      {
+        "after_s": 20,
+        "status": 404,
+        "body": "Sandbox not found"
+      }
+    ]
+  }
+}

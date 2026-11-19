@@ -26,6 +26,13 @@ Revised again on 2026-11-18 after Phase 0. The measurements are in [docs/phase-0
 - Costs come from Modal's per-tag stats.
 - v1 supports one provider, Claude Code. Antigravity moves to later.
 
+Revised on 2026-11-19 after experiment 8 and the grilling round. The main changes:
+- Every machine runs on the VM runtime with no fallback (ADR 0004), and `dockerd` starts at boot.
+- Connect tokens are tested on the VM runtime with two ports (ADR 0003). The controller keeps them and refreshes them after a 401.
+- The proxy tells an ended sandbox, an expired token and a network error apart, and it sends no keepalive pings.
+- The budget counts gross sandbox cost, with a 7-day average for hours the stats don't cover yet.
+- The git identity comes from the GitHub Secret at every boot.
+
 ---
 
 ## 1. Goals and scope
@@ -55,7 +62,7 @@ t3modal is a personal tool first. It runs in the user's own Modal workspace with
 - A marketing website.
 
 **Non-goals**
-- GPU machines. Modal supports them, and the design leaves room for them.
+- GPU machines. Modal supports GPU sandboxes only on its default runtime, and every machine runs on the VM runtime (ADR 0004).
 - Supporting several cloud providers at runtime.
 
 ---
@@ -91,7 +98,7 @@ What t3boat teaches us:
 | `boat exec`, `boat scp` | `sb.exec`, `sb.filesystem.*`, in the SDKs only | The daemon exposes a fixed list of operations over HTTPS (§7.3) |
 | `boat forward` | None | Sign-in without port forwarding (§11) |
 | No lifetime limit | At most 24 hours | Rollover before the limit (§9.6) |
-| systemd services | No systemd | A startup script supervises T3 and the daemon (§7.2) |
+| systemd services | No systemd | A startup script supervises T3, the daemon and `dockerd` (§7.2) |
 | Docker | Works only on `runtime="vm"` | Supported, because every machine uses the VM runtime |
 | Sizes small, default, large | Any `cpu` and `memory` at create | t3modal defines sizes (§13) |
 | `boat usage` in dollars | `app.sandboxes.stats(group_by_tags=...)`, cost per tag over at most 7 days | Costs from per-tag stats, summed per machine every hour (§6.4) |
@@ -123,14 +130,14 @@ t3modal fixes 6 of these fully (5 to 10), reduces 4 (1, 2, 4, 11) and works arou
 
 1. Machines sleep, and wake for scheduled work, with the laptop closed.
 2. Snapshots kept with `ttl=None` never expire.
-3. Any CPU and memory size, and GPUs later.
+3. Any CPU and memory size. GPUs need the default runtime, so t3modal doesn't use them (ADR 0004).
 4. No daily limit on starts.
 5. A Python SDK out of beta.
 6. $30 of credits a month on the Starter plan. Starter also limits a workspace to 5 deployed crons and 1 day of logs.
 7. Images with T3 and the agents already installed, so creating a machine skips the install.
 8. Modal allows one running sandbox per name, so two wakes can't start two copies of a machine.
 9. Modal Secrets attach credentials at each wake, so one sign-in can cover every machine.
-10. Memory snapshots make a pause-and-resume style wake possible. Phase 0 measured 1.7 s from restore to T3 answering.
+10. Memory snapshots make a pause-and-resume style wake possible. Phase 0 measured 0.9 to 1.7 s from restore to T3 answering.
 
 ---
 
@@ -143,7 +150,7 @@ t3modal fixes 6 of these fully (5 to 10), reduces 4 (1, 2, 4, 11) and works arou
 | `snapshot_filesystem()` of the whole disk at every sleep. The next wake starts from that image | Keeps everything: system packages, toolchains, agent logins, git worktrees, Docker images, T3's SQLite database | One image per sleep. Snapshot time grows with the number of changed files. After a fresh boot, Modal loads file contents lazily, at about 44 MB/s on first read | **Chosen**. A 50-image chain showed no slowdown in Phase 0 |
 | `snapshot_directory("/home/t3")` on a fresh base image | Clean upgrades. Smaller snapshots | Anything installed outside `/home` is lost at every sleep | Rejected. Phase 0 found no slowdown in a 50-image chain |
 | A Modal Volume at `/home/t3` | No snapshot step | A network filesystem. Slow for `node_modules` and git, risky for SQLite | Rejected for machines. Used for controller state |
-| Memory snapshots | Processes keep running. Wake takes 1.7 s | Alpha. Expire after 7 days. Modal recommends `runtime="vm"` | Memory sleeps on top of disk snapshots (§4.4). Never the only copy |
+| Memory snapshots | Processes keep running. Wake takes 0.9 to 1.7 s | Alpha. Expire after 7 days. Modal recommends `runtime="vm"` | Memory sleeps on top of disk snapshots (§4.4). Never the only copy |
 
 Every snapshot call passes an explicit `timeout` of 600 seconds. The default of 55 seconds is too short. Phase 0 measured 15 s for 20 GB of new data and 199 s for 200,000 new files of 4 KB, so file count sets the time. A sleep after a large `npm install` can take minutes.
 
@@ -205,7 +212,7 @@ Limits from Modal's docs:
 
 What Phase 0 measured on a VM sandbox:
 - T3 and other processes kept their PIDs, and the boot ID stayed the same. The VM's clock paused while it slept.
-- T3 answered 1.7 s after the restore, with the same environment id.
+- T3 answered 0.9 to 1.7 s after a restore, in two runs, with the same environment id.
 - A restore gets a new full timeout, counted from the restore.
 - `snapshot_filesystem` works on a running VM sandbox, in 3.8 s for a small disk.
 
@@ -217,6 +224,8 @@ Memory sleep order:
 5. The controller runs `_experimental_snapshot()`, which ends the sandbox, then stores `memorySnapshotId`.
 
 If step 5 fails, the controller ends the sandbox anyway, because step 3 already saved the disk. The next wake is a fresh boot.
+
+The memory snapshot calls are alpha. The controller pins the Modal SDK version, and only a t3modal release upgrades it. Any error from a memory snapshot or restore falls back to a disk sleep or a fresh boot. After 3 such failures in a row, the laptop shows a notification.
 
 Wake order:
 1. If `memorySnapshotId` exists, its chain is under 6 days old and the size is unchanged, do a memory restore.
@@ -269,7 +278,8 @@ This needs a T3 token with terminal write access. Phase 2 finds the scope name. 
          │ Sandbox m-<machineId>, runtime vm, latest snapshot, 24 h timeout │
          │  tini → /opt/t3modal/init.sh                                     │
          │   ├─ t3 serve as user t3 on :3773          ← connect URL A       │
-         │   └─ daemon on :3774 (Node 22)             ← connect URL B       │
+         │   ├─ daemon on :3774 (Node 22)             ← connect URL B       │
+         │   └─ dockerd as root                                             │
          └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -302,7 +312,7 @@ One file per machine, `/state/machines/<machineId>.json`:
   "memorySnapshotId": null, "memoryChainStartedAt": null,
   "baseImage": "t3-<t3Version>-<provisionRevision>",
   "sandboxId": null, "startedAt": 0, "stoppedAt": 0,
-  "endpoints": {"t3": {"url": "https://…", "token": "…"}, "daemon": {"url": "https://…", "token": "…"}}, // connect URLs and tokens
+  "endpoints": {"t3": {"url": "https://…", "token": "…"}, "daemon": {"url": "https://…", "token": "…"}}, // connect URLs and tokens, made at each wake (ADR 0003)
   "lastSleep": {"sequence": 4812, "acked": true},
   "nextDueAt": null,               // ms since epoch: next automation, held webhook or limit reset
   "credentialMode": {"github": "all", "claude": "all"},
@@ -338,13 +348,14 @@ Authentication:
 | `POST /machines/{id}/heartbeat` `{sandboxId, nextDueAt, keepAwakeUntil}` | daemon, every 60 s | Liveness for cleanup and schedule data for the timer |
 | `GET /machines` | laptop | Every machine's power state, sandbox id, connect URLs and tokens, `stoppedAt`, `lastSleep`, `pendingSize` and image count |
 | `GET /machines/{id}` | laptop | The same for one machine |
+| `POST /machines/{id}/endpoints` | laptop | Makes fresh connect tokens for the running sandbox and returns its URLs and tokens. The laptop calls it after a 401 from Modal |
 | `POST /machines/{id}/resize` `{size}` | laptop | Sets `pendingSize` |
 | `POST /machines/{id}/terminate` | laptop | Ends the sandbox without a snapshot, for "delete anyway" or a stuck sandbox |
 | `DELETE /machines/{id}` | laptop | Ends the sandbox and deletes its images, memory snapshot and state |
 | `POST /machines/{id}/import` `{images}` | laptop | Rebuilds a lost state file |
 | `GET /usage?since=<unix>` | laptop | Dollars per machine from `costByDay`, plus an estimate for hours the stats don't cover yet. Includes machines deleted this month |
 | `GET /budget`, `PUT /budget` `{monthlyUsd}` | laptop | Reads or sets the monthly budget |
-| `PUT /credentials/{kind}` `{values}` | laptop | Creates or replaces the Secret `t3modal-<kind>`, where kind is `github` or `claude`. Values travel in the HTTPS body, never on a command line |
+| `PUT /credentials/{kind}` `{values}` | laptop | Creates or replaces the Secret `t3modal-<kind>`, where kind is `github` or `claude`. The `github` Secret also holds the commit name and email (§12.2). Values travel in the HTTPS body, never on a command line |
 | `DELETE /credentials/{kind}` | laptop | Deletes that Secret |
 | `GET /credentials` | laptop | Which kinds exist and when they were set. Never returns values |
 | `GET /ops/{opId}` | laptop, daemon | Status of a long operation. A daemon may read only its own machine's operations |
@@ -361,7 +372,8 @@ Authentication:
 ### 6.5 Budget
 
 - The budget is a monthly dollar amount, $20 by default, set with `t3modal budget <usd>`.
-- Spending is the month's `costByDay`, plus an estimate from `runs` and the rates for hours the stats don't cover yet (§13).
+- Spending is the month's gross sandbox cost. That is `costByDay`, plus an estimate for hours the stats don't cover yet. The estimate uses the machine's average hourly cost over its last 7 days, or $0.10 an hour for a new machine. When the stats arrive, they replace it.
+- Credits, snapshot storage and the controller's own runs are outside the budget. `t3modal status` shows the controller's cost as a separate estimate.
 - At 80%, the laptop service shows a notification once a month.
 - At 100%, the controller refuses new wakes with `budget_exceeded`. That covers wakes from the laptop, due wakes and the wake half of a rollover. Running machines finish their work and sleep as usual. A machine refused a due wake stays asleep, and the laptop shows a notification.
 - `t3modal wake --force` and the MCP tool's `force` flag override the block for one wake. A machine secret can never set `force`.
@@ -376,9 +388,10 @@ Authentication:
 | The controller crashes during an operation | The lease expires after 2 minutes. The daemon times out on the operation and returns to active |
 | The controller is unreachable during a sleep | The daemon stays up and retries with backoff. Cost continues. If the sandbox nears its 24-hour limit while the controller is still unreachable, the daemon writes the database backup, and the laptop shows a notification if it can reach the daemon. Nothing can save the disk without the controller, so this one case can lose data. It needs Modal's own API to be down for hours |
 | A wake fails from `images[0]` | The controller retries from `images[1]` and flags `restoredFromPrevious`. The laptop shows a notification |
-| A wake finds a sandbox with the same name running | The controller adopts it and returns its URLs |
+| A wake finds a sandbox with the same name running | The controller adopts it, makes fresh connect tokens and returns its URLs and tokens |
 | A laptop wake and a timer wake race | The lease orders them. The second finds the machine running |
-| A memory restore fails | The controller falls back to a fresh boot from `images[0]` |
+| A memory snapshot or restore fails | The controller falls back to a disk sleep, or to a fresh boot from `images[0]`. After 3 failures in a row, the laptop shows a notification |
+| A VM sandbox can't start | The wake fails with a clear error. There is no fallback to the default runtime (ADR 0004) |
 
 ### 6.7 How machines authenticate
 
@@ -407,14 +420,14 @@ base = (modal.Image.debian_slim(python_version="3.12")
      "useradd -m -s /bin/bash t3 && echo 't3 ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/t3",
      f"su - t3 -c 'curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION={t3_version} sh'",
      f"npm i -g @anthropic-ai/claude-code@{claude_version}",
-     "su - t3 -c 'git config --global user.name t3modal && git config --global user.email t3modal@localhost'")
+     "git config --system user.name t3modal && git config --system user.email t3modal@localhost")
   .add_local_dir("sandbox/", "/opt/t3modal", copy=True))   # init.sh, daemon.mjs, provision.sh
 ```
 
-- Every sandbox runs with `runtime="vm"`. `sudo`, Docker and cgroup CPU stats work only on it, and Modal recommends it for memory snapshots. On the default runtime, `sudo` fails because the container sets "no new privileges", and Docker fails on iptables.
+- Every sandbox runs with `runtime="vm"`. `sudo`, Docker and cgroup CPU stats work only on it, and Modal recommends it for memory snapshots. There is no fallback to the default runtime (ADR 0004). On the default runtime, `sudo` fails because the container sets "no new privileges", and Docker fails on iptables.
 - T3 runs as the user `t3`, not root. Claude Code refuses its skip-permissions mode as root.
-- The image sets a placeholder git identity, because T3 can't make a project's first commit without one. §12.2 replaces it at create.
-- The image includes Docker, but `init.sh` doesn't start `dockerd`. An agent starts it with `sudo dockerd` when a project needs it, so idle machines don't pay for it.
+- The image sets a placeholder git identity in the system git config, because T3 can't make a project's first commit without one. `init.sh` replaces it at every boot (§12.2).
+- The image includes Docker, and `init.sh` starts `dockerd` at boot (§7.2). An idle `dockerd` uses about 40 MB and almost no CPU, which fits inside the 1 GiB request that Modal bills anyway.
 - Each t3modal release pins the versions of Node, T3 and Claude Code. The image is keyed by T3 version and provisioning revision.
 
 ### 7.2 `init.sh`, the supervisor
@@ -423,10 +436,11 @@ base = (modal.Image.debian_slim(python_version="3.12")
 
 1. On a fresh boot from an image with the database backup marker, it replaces `statev2.sqlite` with the backup (§4.4).
 2. It writes `/etc/machine-info` with the machine's name.
-3. It exports credentials from the attached Secrets, following the machine's credential modes (§11, §12).
-4. It runs two supervised loops as the user `t3`:
+3. It exports credentials from the attached Secrets, following the machine's credential modes (§11, §12). It writes the commit name and email from the GitHub Secret to `/etc/gitconfig`, or keeps the placeholder (§12.2).
+4. It runs three supervised loops. The first two run as the user `t3`:
    - `t3 serve --host 0.0.0.0 --port 3773`. Both flags are required. Without `--port`, T3 picks the first free port from 3773, and without `--host` it doesn't listen on the container's interface. The loop doesn't restart T3 while `~/.t3modal/t3.hold` exists, which lets the daemon stop T3 for a disk sleep.
    - `node ~/.t3modal/daemon.mjs`, or `/opt/t3modal/daemon.mjs` before the first provisioning. It restarts on exit, so an upgraded daemon replaces itself without restarting T3.
+   - `dockerd`, as root, in the background. T3 doesn't wait for it.
 
 `init.sh` never exits, because the sandbox ends without a snapshot when its first process exits. A crashing loop retries with backoff. The 24-hour timeout bounds the cost.
 
@@ -492,7 +506,7 @@ The `t3modal` binary is both the service and the CLI. Commands:
 | `t3modal sleep <name>` | Asks the daemon to drain now |
 | `t3modal resize <name> <size>` | §9.5 |
 | `t3modal delete <name> [--anyway]` | §9.8 |
-| `t3modal pair <name>` | Prints a new pairing link and copies it to the clipboard |
+| `t3modal pair <name>` | Prints a new pairing link, valid for 15 minutes, and copies it to the clipboard |
 | `t3modal project add <name> <repo> [--env <file>]` | Clones a repo through T3 and writes its `.env` |
 | `t3modal accounts github\|claude` | §11, §12 |
 | `t3modal budget [usd]` | Shows or sets the monthly budget |
@@ -509,13 +523,14 @@ The MCP server keeps t3boat's tool names, so agents' prompts carry over: `create
 The service shows a macOS notification when:
 - A machine will roll over in 20 minutes while kept awake (§9.6).
 - A sleep failed 3 times in a row.
+- Memory sleeps or memory restores fell back 3 times in a row (§4.4).
 - A wake fell back to the previous image.
 - Spending reached 80% of the budget, or the budget blocked a wake.
 - A GitHub token expires within 7 days.
 
 ### 8.5 Secrets on the laptop
 
-The Keychain holds the controller's admin token, each machine secret and each upstream T3 token. Connect tokens change at every wake, so the service keeps them in memory only. The service uses a Keychain library that calls the macOS Security framework directly, never the `security` command with a secret as an argument, because arguments show in `ps`. Phase 3 picks a library that works under Bun. Later, on Linux, the fallback is a file in `~/.t3modal/` with mode 0600.
+The Keychain holds the controller's admin token, each machine secret and each upstream T3 token. Connect tokens change at every wake, so the service keeps them in memory only. After a 401 from Modal, it gets fresh ones from `POST /machines/{id}/endpoints` (ADR 0003). The service uses a Keychain library that calls the macOS Security framework directly, never the `security` command with a secret as an argument, because arguments show in `ps`. Phase 3 picks a library that works under Bun. Later, on Linux, the fallback is a file in `~/.t3modal/` with mode 0600.
 
 ---
 
@@ -528,9 +543,9 @@ Power states: `unknown`, `starting`, `running`, `standby`, `stopping`, `stopped`
 1. `POST /machines {name, size, t3Version}`. The CLI shows "Preparing image". The first machine on a new T3 version takes 1 to 3 minutes for the image build. Later ones reuse the cached image.
 2. Poll the operation until the machine runs and its URLs are known.
 3. `POST {daemonUrl}/provision {t3Version, name, mintUpstream: true}`, which returns `{environmentId, upstreamToken}`.
-4. Apply credentials and GitHub identity (§11, §12).
+4. Apply per-machine sign-ins if the user chose "this machine" mode, such as a GitHub device code or a Claude Code code paste (§11.3, §12.2). Credentials for all machines and the git identity come from the attached Secrets at every boot (§7.2).
 5. `POST /machines/{id}/checkpoint`. Until the first sleep, this snapshot is the only saved copy of the machine's T3 environment id and tokens.
-6. Assign the next free localhost port and save the record. Print the proxy's pairing link and copy it to the clipboard. The user pastes it into T3 Code under Settings, Environments, Add environment (§10.2). In Phase 0, the `t3code://pair?pairingUrl=` deep link did nothing in T3 Code 0.1.11.
+6. Assign the next free localhost port and save the record. Print the proxy's pairing link and copy it to the clipboard. The link lasts 15 minutes, and `t3modal pair` makes a new one. The user pastes it into T3 Code under Settings, Environments, Add environment (§10.2). In Phase 0, the `t3code://pair?pairingUrl=` deep link did nothing in T3 Code 0.1.11, so v1 doesn't use it.
 
 ### 9.2 Wake
 
@@ -541,12 +556,12 @@ Power states: `unknown`, `starting`, `running`, `standby`, `stopping`, `stopped`
    - attaches the machine's ephemeral Secret and each `t3modal-<kind>` Secret that exists;
    - tags it `{"t3modal": id}`;
    - creates connect tokens for ports 3773 and 3774, stores the URLs and tokens, and opens a new entry in `runs`.
-2. Update the record with the new connect URLs and tokens.
+2. Keep the new connect URLs and tokens in memory. They never go to the state file or the Keychain (§8.5).
 3. Poll `GET {t3Url}/.well-known/t3/environment` until the environment id matches.
 4. If the T3 version or provisioning revision differs, call `/provision`.
 5. Tell the daemon about the activity that caused the wake, then send any messages the proxy held (§10.4).
 
-In Phase 0, T3 answered 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
+In Phase 0, T3 answered 0.9 to 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
 
 ### 9.3 Sleep, decided on the machine
 
@@ -571,7 +586,15 @@ Rules carried over from t3boat:
 
 ### 9.4 Detecting a sleeping machine in the proxy
 
-A request to an ended sandbox's tunnel gets no HTTP answer. The connection closes with nothing sent. Phase 0 tested this on a tunnel, and a connect URL probably behaves the same. URLs also change at every wake. So after any failed request, the proxy asks the controller for the machine's state and current URLs, and wakes it only if it isn't running.
+Modal's edge can answer a request to a connect URL in three ways. The proxy tells them apart from T3's own answers, whose bodies are T3's JSON (ADR 0003):
+
+| Answer | Meaning | What the proxy does |
+|---|---|---|
+| 404 "Sandbox not found" | The sandbox has ended. Phase 0 saw this within 2 s of the end | Asks the controller for the machine's state and current URLs, and wakes the machine only if it isn't running |
+| 401 | The connect token is missing or no longer valid | Gets fresh tokens from `POST /machines/{id}/endpoints` and retries once |
+| No answer | A network error | Retries once after 2 s, then acts as for a 404 |
+
+URLs change at every wake, including a memory restore.
 
 ### 9.5 Resize
 
@@ -623,6 +646,7 @@ t3boat's `docs/t3-protocol.md` describes how T3 Code talks to a T3 server. We us
 - T3 Code pairs with the proxy, not the machine. The proxy runs its own small auth server and issues T3 Code its own tokens, as t3boat does.
 - The proxy talks to the machine with the upstream token from provisioning, through the machine's connect URL.
 - The proxy adds Modal's connect token to every upstream request as the `_modal_connect_token` query parameter. It can't use the `Authorization` header, because T3 uses that header for its own bearer token, and Phase 0 showed T3 then sees no session.
+- Modal answers a request that has the token in its query with a `_modal_connect_token` cookie. The proxy removes that `Set-Cookie` header, so T3 Code never holds Modal's token. A Phase 4 test checks this.
 - The proxy passes T3 Code's own query parameters through unchanged. T3's `/ws` answers 426 without `orchestrationProtocol=2`.
 - The proxy removes `directEndpoints` from the server's answers, so T3 Code never bypasses it for an address that changes at every wake.
 
@@ -630,7 +654,7 @@ t3boat's `docs/t3-protocol.md` describes how T3 Code talks to a T3 server. We us
 
 The proxy forwards WebSocket messages both ways. When the upstream connection drops at a sleep or rollover, the proxy keeps T3 Code's connection open and switches to answering from the capture.
 
-In Phase 0, an idle WebSocket through a connect URL stayed open for 75 s and then answered a ping. Longer idle periods are still to test (§18). If they time out, the proxy sends keepalive pings.
+In Phase 0, an idle WebSocket through a connect URL stayed open for 30 minutes and then answered a ping, so the proxy sends no keepalive pings. If the upstream connection drops while the machine is still running, the proxy reconnects at once and keeps T3 Code's connection open.
 
 ### 10.4 While the machine sleeps
 
@@ -701,7 +725,7 @@ GitHub reports a token's expiry date in each API response. The service checks it
 
 At every boot, `init.sh` runs `gh auth setup-git` as `t3`, so git asks `gh` for credentials. In "all machines" mode it exports `GH_TOKEN`. In "this machine" mode it doesn't, because `GH_TOKEN` overrides a stored `gh` login.
 
-At create, t3modal sets the commit name and email. By default they come from the GitHub profile, with the noreply address `<id>+<login>@users.noreply.github.com`. The user can choose the laptop's `git config --global` values instead. Without a GitHub account, the image's placeholder `t3modal <t3modal@localhost>` stays.
+`t3modal accounts github` also works out the commit name and email and stores them in the `t3modal-github` Secret next to the token. By default they come from the GitHub profile, with the noreply address `<id>+<login>@users.noreply.github.com`. The user can choose the laptop's `git config --global` values instead. At every boot, `init.sh` writes them to the system git config, `/etc/gitconfig`, so every machine follows the current account. A `git config --global` that the user sets inside a machine takes priority and survives boots. Without a GitHub account, the image's placeholder `t3modal <t3modal@localhost>` stays.
 
 Rejected:
 - **A GitHub App.** It needs a server holding the app's private key.
@@ -723,13 +747,15 @@ Phase 0 chose **mode B, small requests with limits**. Every size requests 0.25 c
 | default | 4 cores, 8 GiB | 0.76 |
 | large | 8 cores, 16 GiB | 1.52 |
 
+Modal guarantees only the request, so a busy host may give a machine less than its limit. Phase 0 got the full 4 cores in one test. If agents report slow builds, the request is one number to raise.
+
 A machine pays its full limit only while it uses it. An agent spends most of a turn waiting for the model's API. A machine averaging 0.3 cores and 2 GiB in use costs about $0.09 an hour. Standby costs about $0.06 an hour. A Modal core is 2 virtual CPUs.
 
 The rejected mode A requested a fixed size, such as 2 cores and 8 GiB for $0.48 an hour, whether used or not.
 
 The $20 default budget buys about 200 awake hours at that average. Starter includes $30 of credits a month, so the default budget stays inside them.
 
-Costs come from `app.sandboxes.stats` grouped by the `t3modal` tag, which Phase 0 matched against the expected cost to within $0.0001 (§6.4). Snapshot storage has no published price. Phase 3 reads it from the workspace's usage page, as §18 says for Q4. `t3modal status` shows it if it matters.
+Costs come from `app.sandboxes.stats` grouped by the `t3modal` tag, which Phase 0 matched against the expected cost to within $0.0001 (§6.4). Snapshot storage has no published price. Phase 3 reads it from the workspace's usage page, as §18 says for Q4. `t3modal status` shows it if it matters. The budget counts gross sandbox cost only (§6.5).
 
 ---
 
@@ -784,7 +810,7 @@ Inside a machine, the user `t3` has passwordless sudo and can run Docker. The VM
 
 ### Phase 0: experiments, 3 to 4 days
 
-Done on 2026-11-18. Throwaway scripts on the `phase-0` branch ran 7 experiments against the user's Starter workspace for under $1. The reading is in `docs/phase-0-research.md` and the measurements are in `docs/phase-0-findings.md`. Phase 0 chose sizing mode B, memory sleeps on, the VM runtime for every machine and connect-token URLs, and moved Antigravity to later. §18 lists what is still open.
+Done on 2026-11-19. Throwaway scripts in `experiments/phase-0/` ran 8 experiments against the user's Starter workspace for under $1. The reading is in `docs/phase-0-research.md` and the measurements are in `docs/phase-0-findings.md`. Phase 0 chose sizing mode B, memory sleeps on, the VM runtime for every machine and connect-token URLs, and moved Antigravity to later. The grilling round on 2026-11-19 settled the decisions that followed (§19). §18 lists what is still open.
 
 ### Phase 1: repository and controller, 5 to 6 days
 
@@ -801,7 +827,7 @@ Done on 2026-11-18. Throwaway scripts on the `phase-0` branch ran 7 experiments 
   - The daemon reports idle and busy correctly.
   - A database restored from the backup passes `PRAGMA integrity_check`.
   - Claude Code code paste finishes.
-  - `docker run hello-world` works as `t3`.
+  - `dockerd` runs after boot, and `docker run hello-world` works as `t3`.
 
 ### Phase 3: laptop service core and CLI, 6 to 8 days
 
@@ -811,7 +837,7 @@ Done on 2026-11-18. Throwaway scripts on the `phase-0` branch ran 7 experiments 
 
 ### Phase 4: proxy, pairing and capture, 8 to 10 days
 
-- WebSocket forwarding, pairing and auth, `directEndpoints` removal, capture refresh and freshness, answering from the capture, holding and forwarding calls that wake the machine (§10).
+- WebSocket forwarding, pairing and auth, `directEndpoints` removal, capture refresh and freshness, answering from the capture, holding and forwarding calls that wake the machine (§10). Modal's error answers and token refresh (§9.4), and removing Modal's token cookie.
 - Done when a user can:
   - pair a machine with T3 Code and chat;
   - close the laptop in the middle of a turn and reopen it later, to find the turn finished and the machine asleep;
@@ -856,7 +882,7 @@ The total is about 7 to 9 weeks for one engineer. Phases 1 and 2 can run in para
 
 ## 18. Phase 0 answers and open questions
 
-Phase 0 answered 12 of the 17 questions in full. [docs/phase-0-findings.md](docs/phase-0-findings.md) has the measurements, and the sections above use them.
+Phase 0 answered 15 of the 21 questions. [docs/phase-0-findings.md](docs/phase-0-findings.md) has the measurements, and the sections above use them.
 
 | # | Question | Answer |
 |---|---|---|
@@ -864,6 +890,7 @@ Phase 0 answered 12 of the 17 questions in full. [docs/phase-0-findings.md](docs
 | 3 | Do long snapshot chains slow down or break? | No. 50 generations, with older images deleted, booted faster at the end |
 | 5 | Memory snapshots with T3, disk snapshots on VM, the timeout after a restore | All work. Processes keep their PIDs. A restore gets a new full timeout |
 | 6 | `(request, limit)` pairs and CPU above the request | Both work. 4.00 cores used with a 0.25-core request. A Modal core is 2 vCPUs |
+| 7 | Do WebSockets through a connect URL survive long idle periods? | Yes. One stayed open for 30 minutes with no traffic, then answered a ping |
 | 8 | What an ended sandbox's tunnel answers | Nothing. The connection closes with no HTTP answer |
 | 9 | `/proc/stat`, cgroup stats, `node:sqlite`, `script`, `sudo`, Docker | All work on `runtime="vm"`. `sudo`, Docker and cgroup stats fail on the default runtime |
 | 10 | `t3 serve` without systemd | Works as user `t3`. Needs both `--host` and `--port` |
@@ -872,6 +899,8 @@ Phase 0 answered 12 of the 17 questions in full. [docs/phase-0-findings.md](docs
 | 14 | Antigravity's Google sign-in on a machine | Fails. Antigravity moves to later (§11.2) |
 | 16 | Connect tokens with T3 | HTTP and WebSocket work with the token as a query parameter. The `Authorization` header collides with T3's bearer |
 | 17 | Starter limits | $30 of credits a month, 100 containers, 5 deployed crons, 1 day of logs |
+| 18 | How long a connect token lasts, and tokens for two ports | Tokens for 3773 and 3774 work at once, each on its own URL. A second token for a port leaves the first valid. Every token still worked at 90 minutes. Longer is untested |
+| 19 | What an ended sandbox's connect URL answers | 404 "Sandbox not found" within 2 s |
 
 Still open:
 
@@ -879,11 +908,8 @@ Still open:
 |---|---|---|---|
 | 2 | Read speed after a memory restore, and on a second read after a fresh boot | §4.4, Phase 2 | Warm the repo's files after a fresh boot |
 | 4 | What snapshot storage costs. Modal publishes no price | §13, Phase 3 | Fewer images, shown in costs |
-| 7 | Do WebSockets through a connect URL survive 10 minutes or more idle? | §10.3, Phase 4 | Keepalive pings from the proxy |
 | 11 | The controller's cold start with FastAPI loaded | §9.2, Phase 1 | Keep one container warm during the day |
 | 15 | Every call T3 Code makes on connect, from a recorded session | §10.4, Phase 4 | Wake on any call the capture lacks |
-| 18 | How long a connect token lasts, and whether one sandbox can hold tokens for two ports | §9.2, Phase 1 | Refresh tokens from the controller, or put the daemon behind T3's port |
-| 19 | Does a connect URL for an ended sandbox close the connection, as a tunnel does? | §9.4, Phase 4 | Ask the controller after any error |
 | 20 | Does Claude's sign-in show the "Paste code here" step when nothing answers on its localhost port? | §11.2, Phase 2 | An Anthropic API key as the fallback |
 | 21 | Does Docker's data survive a memory sleep and a disk sleep? | §7.1, Phase 2 | Document that images are rebuilt after a disk sleep |
 
@@ -916,18 +942,28 @@ Settled in the design review on 2026-11-18. Phase 0 revised 14 and added 16:
 | 19 | The controller's timer runs every minute | §6.4 |
 | 20 | No marketing website in v1 | §1 |
 
-Settled by Phase 0 on 2026-11-18. The grilling round checks these next:
+Settled by Phase 0 on 2026-11-18 and checked in the grilling round on 2026-11-19:
 
 | # | Decision | Record |
 |---|---|---|
-| 21 | Every machine runs on `runtime="vm"` | §7.1 |
-| 22 | Connect-token URLs replace public tunnels. The token goes in a query parameter | §10.2, §15.1 |
-| 23 | Sizing mode B. Every size requests 0.25 cores and 1 GiB, with limits by size | §13 |
-| 24 | Memory sleeps ship on | §4.4 |
-| 25 | Docker is supported. `dockerd` starts only when an agent needs it | §7.1 |
+| 21 | Every machine runs on `runtime="vm"`, with no fallback | ADR 0004 |
+| 22 | Connect-token URLs replace public tunnels. The token goes in a query parameter, with one token per port | ADR 0003 |
+| 23 | Sizing mode B. Every size requests 0.25 cores and 1 GiB, with limits by size. If builds are slow, raise the request | §13 |
+| 24 | Memory sleeps ship on. The Modal SDK is pinned, and any error falls back to a disk sleep or fresh boot | §4.4 |
+| 25 | Docker is supported. `init.sh` starts `dockerd` at boot | §7.1, §7.2 |
 | 26 | Costs come from per-tag stats, summed hourly per machine | §6.4 |
-| 27 | Pairing prints a link for the user to paste into T3 Code | §9.1 |
-| 28 | Each machine has a git identity from its first boot | §7.1, §12.2 |
+| 27 | Pairing prints a link for the user to paste into T3 Code. It lasts 15 minutes. No deep link in v1 | §9.1 |
+| 28 | Each machine has a git identity from its first boot. `init.sh` writes it from the GitHub Secret to `/etc/gitconfig` at every boot | §7.2, §12.2 |
+
+Settled in the grilling round on 2026-11-19:
+
+| # | Decision | Record |
+|---|---|---|
+| 29 | The budget counts gross sandbox cost. Unreported hours use the machine's 7-day average, or $0.10 an hour for a new machine | §6.5 |
+| 30 | The controller keeps connect tokens and refreshes them after a 401. The laptop keeps them in memory only | ADR 0003, §8.5 |
+| 31 | The proxy tells 404 "Sandbox not found", 401 and no answer apart | §9.4 |
+| 32 | No WebSocket keepalive pings. The proxy reconnects after a drop | §10.3 |
+| 33 | The proxy removes Modal's token cookie | §10.2 |
 
 ---
 
