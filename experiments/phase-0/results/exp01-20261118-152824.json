@@ -1,0 +1,72 @@
+{
+  "experiment": "exp01_memory_restore",
+  "lifetime_s": 360,
+  "steps": {
+    "create": {
+      "sandbox_id": "sb-01M7R8DFQF538B0MVS3YNF32Z2",
+      "t3_ready_s": 4.5,
+      "tunnel": "https://ta-01m7r8dfqfkv2762fpqytyp32v-3773-1f2og791ac2ia6dtab41do1lk.w.modal.host",
+      "environment_id": "d6672171-4895-4605-a4e4-d4b840f3aae9"
+    },
+    "before": {
+      "t3": "1027",
+      "ticker": "1028",
+      "boot_id": "4e4322df-df2c-4dd2-a8cd-60c75ea22f68",
+      "uptime": "4.41 78.35"
+    },
+    "disk_snapshot": {
+      "ok": true,
+      "image_id": "im-01M7R8H8D12W6VH031GY4K5KSX",
+      "seconds": 3.8
+    },
+    "memory_snapshot": {
+      "snapshot_id": "sn-01M7R8H8HBMF6QH8RMYA324VEZ",
+      "seconds": 3.4,
+      "ran_before_s": 124.1,
+      "original_poll": 0
+    },
+    "old_tunnel": [
+      {
+        "after_s": 3.8,
+        "status": 0,
+        "body": "RemoteDisconnected: Remote end closed connection without response"
+      },
+      {
+        "after_s": 23.9,
+        "status": 0,
+        "body": "RemoteDisconnected: Remote end closed connection without response"
+      }
+    ],
+    "restore": {
+      "sandbox_id": "sb-01M7R8M0HW44YPHNDY3G4C58R2",
+      "t3_ready_s": 1.7,
+      "tunnel": "https://ta-01m7r8m0hwp0jhqv47yer6829v-3773-1f2og791ac2ia6dtab41do1lk.w.modal.host",
+      "same_tunnel": false,
+      "environment_id_same": true,
+      "t3_pid": "1027",
+      "ticker_pid": "1028",
+      "t3_alive": "yes",
+      "ticker_alive": "yes",
+      "boot_id": "4e4322df-df2c-4dd2-a8cd-60c75ea22f68",
+      "uptime": "124.53 2253.06",
+      "tick_gap_s": "91"
+    },
+    "fresh_boot": {
+      "ok": true,
+      "t3_ready_s": 4.4,
+      "environment_id_same": true,
+      "backup_present": "yes",
+      "ticks_kept": "124"
+    },
+    "restored_end": {
+      "ended": true,
+      "since_create_s": 580.3,
+      "since_restore_s": 366.2,
+      "expected_if_wall_clock_carries": 360,
+      "expected_if_running_time_carries": 235.9,
+      "expected_if_reset": 360,
+      "returncode": 124
+    }
+  },
+  "clock_verdict": "a restore resets the timeout"
+}
