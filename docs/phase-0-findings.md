@@ -21,6 +21,8 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 12 | What does Modal bill, and can t3modal read it? | The larger of request and use, sampled. `app.sandboxes.stats(group_by_tags=...)` works on Starter and matched the expected cost. Per-sandbox `_experimental_stats()` is refused on Starter | Costs come from per-tag stats, tagged by machine |
 | 9 | What works inside a sandbox? | See the table under experiment 6. Docker, `sudo` and cgroup CPU stats work only on `runtime="vm"` | VM runtime for every machine |
 | 10 | Does `t3 serve` run as a non-root user without systemd? | Yes, on both runtimes. Its log had no keep-awake or systemd lines | §7.2 works as written |
+| 13 | Does Claude Code work through T3 with only `CLAUDE_CODE_OAUTH_TOKEN`? | Yes. T3 showed Claude Code as authenticated, and a thread answered in 2.6 s with no sign-in step | §11's token route works as written |
+| 14 | Does T3's Antigravity Google sign-in work on a machine? | No. Four separate blockers on a Linux machine with no screen. Three were worked around, and the fourth was still open when the user stopped the test | Antigravity leaves v1 |
 
 Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21.
 
@@ -128,6 +130,27 @@ Script: `experiments/phase-0/exp06_runtime_checks.py`. The image added Node 22, 
 | Docker, `docker run hello-world` | Works | Fails, because iptables has no nft support |
 | Keep-awake or systemd lines in T3's log | None | None |
 
+## Experiment 7: agent sign-ins
+
+Script: `experiments/phase-0/exp07_signins.py`. The machine ran T3 0.1.11-nightly as user `t3` on `runtime="vm"`, with the user's `claude setup-token` token passed as an ephemeral Modal Secret. The user paired T3 Code (Nightly) on their Mac with the machine and worked in it.
+
+**Claude Code works with only the token.** `ANTHROPIC_API_KEY` was unset. `claude -p` as `t3` answered, T3's Providers page showed Claude as authenticated, and a thread using Haiku answered "hi" 2.6 s after the message. The token never touched the disk.
+
+**Antigravity's Google sign-in does not work.** T3 downloaded the Antigravity helper, 257 MB, into `~/.t3/tools/antigravity-acp` when the user clicked Install. Sign-in then failed in turn on each of these:
+
+1. The `antigravity` binary checks for a graphical display and refuses to call T3's browser helper without one. A dummy `DISPLAY=:0` got past it.
+2. It then opens the link with `xdg-open`, which the image lacked.
+3. Debian's `xdg-open` runs T3's shell-quoted `BROWSER` command without a shell, so it fails with "'/usr/bin/node': not found". A 9-line replacement in `experiments/phase-0/xdg-open-shim.sh` fixed it in a direct test.
+4. The user still saw no link in T3 Code, and stopped the test.
+
+The terminal route, `antigravity acp --login`, needs no display. It prints a Google link and reads back the pasted code, with a callback on `https://antigravity.google/oauth-callback`. T3 does not use that route.
+
+**Other findings.**
+
+- The `t3code://pair?pairingUrl=` deep link did nothing in T3 Code (Nightly) 0.1.11. Pasting the pairing link into Settings, Environments, Add environment worked.
+- A new machine has no git `user.name` or `user.email`, so T3 created a project without its first commit. A placeholder identity fixed it.
+- `pkill -f 't3 serve'` also matches the sandbox's own start command, whose text contains the same words, and ends the sandbox with exit code 143. Stopping T3 must match only the `t3` user's processes.
+
 ## What changes in the plan
 
 1. **Connect-token URLs replace public tunnels.** Each wake creates connect tokens for ports 3773 and 3774. The sandbox opens no `encrypted_ports`. Modal then turns away any request without the token, so the T3 environment and the daemon are no longer reachable by anyone who learns a URL. The proxy sends the token as a query parameter, because T3 needs the `Authorization` header for its own bearer. §5, §6.2, §9.2, §10 and §15.1 change. Still to check: how long a connect token lasts, and whether one sandbox can hold two tokens for different ports.
@@ -136,9 +159,12 @@ Script: `experiments/phase-0/exp06_runtime_checks.py`. The image added Node 22, 
 4. **Rollover stays as planned.** Each wake gets a full timeout, so a machine that sleeps once a day never reaches the 24-hour limit.
 5. **Sizing mode B.** Every size requests 0.25 cores and 1 GiB and sets its limit by size. Standby stays on at about $0.06 an hour.
 6. **Docker moves from non-goals to supported.** It works on the VM runtime, which every machine now uses.
-7. **Costs come from `app.sandboxes.stats` grouped by a machine tag.** It covers at most 7 days per call, so the controller sums it daily into each machine's state.
+7. **Costs come from `app.sandboxes.stats` grouped by a machine tag.** It covers at most 7 days per call, so the controller sums it every hour into each machine's state.
 8. **Memory sleep matters more than planned.** A fresh boot reads file contents at about 44 MB/s the first time, so the first build after a disk sleep is slow. Disk sleeps should stay rare.
 9. **Sleeps after big installs can take minutes.** Snapshot time follows file count. The daemon should report "saving" in its status so the laptop can show it.
+10. **Antigravity leaves v1.** The user dropped it after the Google sign-in failed on a machine. v1 ships with one provider, Claude Code. Antigravity with a Gemini API key was not tested and can come back later. §1, §2, §7, §11, §16, §17 and §19 change.
+11. **Each machine gets a git identity when it is created.** Without one, T3 cannot make a project's first commit.
+12. **Pairing shows a link to paste.** The `t3code://` deep link did nothing, so `t3modal` prints the pairing link and the user pastes it into T3 Code.
 
 ## Still to run
 
@@ -146,7 +172,5 @@ Script: `experiments/phase-0/exp06_runtime_checks.py`. The image added Node 22, 
 |---|---|---|
 | 4 | What snapshot storage costs | Modal publishes no price. Check the workspace's usage page after today's images expire |
 | 11 | The controller's cold start | Measured when Phase 1 deploys the controller |
-| 13 | Does T3 show Claude Code as signed in with only `CLAUDE_CODE_OAUTH_TOKEN`? | Needs the user's own `claude setup-token` token |
-| 14 | Does T3's Antigravity Google sign-in finish by pasting the redirect URL, and survive a sleep? | Needs the user's Google sign-in |
 | 2 | Read speed after a memory restore, and on a second read after a fresh boot | Next small experiment |
 | 7 | WebSockets idle for 10 minutes or more | Next small experiment |
