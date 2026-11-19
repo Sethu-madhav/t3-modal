@@ -17,12 +17,14 @@ Steps, each a separate run so the user can act in between:
   stop                end every exp07 sandbox
 
 The token is read from a file and passed as an ephemeral Modal Secret. It is
-never printed. Pairing links go to the scratch state file, not results/.
+never printed. Pairing links print to the terminal for the user to paste and
+never go to results/. A failed start or sleep-wake ends its sandbox.
 Cost is about $0.06 an hour while running.
 """
 
 import json
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -30,7 +32,7 @@ import modal
 
 from common import TAG, app, log, save, sh, wait_for_t3
 
-STATE = Path("/private/tmp/claude-501/-Users-mini4--t3-projects-t3-modal/44af9240-35df-4212-873d-edd6347a8c13/scratchpad/exp07-state.json")
+STATE = Path(tempfile.gettempdir()) / "t3modal-exp07-state.json"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -82,6 +84,14 @@ def antigravity_files(sb) -> str:
 def start(token_file: str) -> None:
     token = Path(token_file).read_text().strip()
     sb = create(image, token)
+    try:
+        _start_checks(sb, token_file)
+    except BaseException:
+        sb.terminate()
+        raise
+
+
+def _start_checks(sb: modal.Sandbox, token_file: str) -> None:
     url = sb.tunnels()[3773].url
     wait_for_t3(url)
     log(f"T3 is up in {sb.object_id}")
@@ -111,13 +121,17 @@ def sleep_wake() -> None:
     token = Path(state["token_file"]).read_text().strip()
     t = time.time()
     sb2 = create(img, token)
-    url = sb2.tunnels()[3773].url
-    wait_for_t3(url)
-    rec["fresh_boot_s"] = round(time.time() - t, 1)
-    rec["antigravity_token_files_after"] = antigravity_files(sb2)
-    log(f"after the disk sleep: {rec}")
-    STATE.write_text(json.dumps({**state, "sandbox_id": sb2.object_id}))
-    pair(sb2, url)
+    try:
+        url = sb2.tunnels()[3773].url
+        wait_for_t3(url)
+        rec["fresh_boot_s"] = round(time.time() - t, 1)
+        rec["antigravity_token_files_after"] = antigravity_files(sb2)
+        log(f"after the disk sleep: {rec}")
+        STATE.write_text(json.dumps({**state, "sandbox_id": sb2.object_id}))
+        pair(sb2, url)
+    except BaseException:
+        sb2.terminate()
+        raise
     save("exp07-sleep-wake", rec)
 
 

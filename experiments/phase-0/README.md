@@ -1,8 +1,8 @@
 # Phase 0 experiments
 
-PROTOTYPE, throwaway. This code lives on the `phase-0` branch only and never merges to main. Only the findings in `docs/phase-0-findings.md` merge.
+PROTOTYPE, throwaway. These scripts merge to main as the record behind `docs/phase-0-findings.md`. No product code imports them.
 
-Each script answers questions from `implementation.md` §18 against the real Modal workspace. Each one creates sandboxes in the app `t3modal-phase0`, tags them `t3modal-phase0`, and ends them before it exits. Images get a one-hour TTL.
+Each script answers questions from `implementation.md` §18 against the real Modal workspace. Each one creates sandboxes in the app `t3modal-phase0`, tags them `t3modal-phase0`, and ends them before it exits. Images get a TTL of one or two hours.
 
 | Script | Questions | Rough cost |
 |---|---|---|

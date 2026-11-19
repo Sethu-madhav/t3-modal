@@ -105,7 +105,7 @@ The Boat side comes only from t3boat's code and docs, not from Boat's own docume
 
 | # | Drawback | Modal feature that helps | What t3modal builds | What remains |
 |---|---|---|---|---|
-| 1 | An awake machine costs about 13 times Boat's hourly price when it uses all it requests | Billing is the larger of requested and used resources | Small requests, standby, fast sleep, a budget (§4.4, §13) | Modal sets the rates |
+| 1 | An awake machine costs about 13 times Boat's hourly price when it uses its full size limit | Billing is the larger of requested and used resources | Small requests, standby, fast sleep, a budget (§4.4, §13) | Modal sets the rates |
 | 2 | No pause and resume | Disk snapshots, memory snapshots in alpha | Layered sleep (§4.4) | A slower fresh boot about once a week |
 | 3 | Sandboxes end after 24 hours | Snapshots make restarts possible | Rollover (§9.6) | An occasional interrupted long turn |
 | 4 | The snapshot is the only copy, so a crash loses work since the last sleep | Snapshots without ending the sandbox | Checkpoints while busy (§9.7) | A shorter loss window, not zero |
@@ -143,7 +143,7 @@ t3modal fixes 6 of these fully (5 to 10), reduces 4 (1, 2, 4, 11) and works arou
 | `snapshot_filesystem()` of the whole disk at every sleep. The next wake starts from that image | Keeps everything: system packages, toolchains, agent logins, git worktrees, Docker images, T3's SQLite database | One image per sleep. Snapshot time grows with the number of changed files. After a fresh boot, Modal loads file contents lazily, at about 44 MB/s on first read | **Chosen**. A 50-image chain showed no slowdown in Phase 0 |
 | `snapshot_directory("/home/t3")` on a fresh base image | Clean upgrades. Smaller snapshots | Anything installed outside `/home` is lost at every sleep | Rejected. Phase 0 found no slowdown in a 50-image chain |
 | A Modal Volume at `/home/t3` | No snapshot step | A network filesystem. Slow for `node_modules` and git, risky for SQLite | Rejected for machines. Used for controller state |
-| Memory snapshots | Processes keep running. Wake takes 1.7 s | Alpha. Expire after 7 days. Need `runtime="vm"` | Memory sleeps on top of disk snapshots (§4.4). Never the only copy |
+| Memory snapshots | Processes keep running. Wake takes 1.7 s | Alpha. Expire after 7 days. Modal recommends `runtime="vm"` | Memory sleeps on top of disk snapshots (§4.4). Never the only copy |
 
 Every snapshot call passes an explicit `timeout` of 600 seconds. The default of 55 seconds is too short. Phase 0 measured 15 s for 20 GB of new data and 199 s for 200,000 new files of 4 KB, so file count sets the time. A sleep after a large `npm install` can take minutes.
 
@@ -411,7 +411,7 @@ base = (modal.Image.debian_slim(python_version="3.12")
   .add_local_dir("sandbox/", "/opt/t3modal", copy=True))   # init.sh, daemon.mjs, provision.sh
 ```
 
-- Every sandbox runs with `runtime="vm"`. Memory snapshots need it, and on it `sudo`, Docker and cgroup CPU stats work. On the default runtime, `sudo` fails because the container sets "no new privileges", and Docker fails on iptables.
+- Every sandbox runs with `runtime="vm"`. `sudo`, Docker and cgroup CPU stats work only on it, and Modal recommends it for memory snapshots. On the default runtime, `sudo` fails because the container sets "no new privileges", and Docker fails on iptables.
 - T3 runs as the user `t3`, not root. Claude Code refuses its skip-permissions mode as root.
 - The image sets a placeholder git identity, because T3 can't make a project's first commit without one. §12.2 replaces it at create.
 - The image includes Docker, but `init.sh` doesn't start `dockerd`. An agent starts it with `sudo dockerd` when a project needs it, so idle machines don't pay for it.
@@ -546,7 +546,7 @@ Power states: `unknown`, `starting`, `running`, `standby`, `stopping`, `stopped`
 4. If the T3 version or provisioning revision differs, call `/provision`.
 5. Tell the daemon about the activity that caused the wake, then send any messages the proxy held (§10.4).
 
-In Phase 0, T3 answered 1.7 s after a memory restore and 4.4 to 6.6 s after a fresh boot. The controller's cold start and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
+In Phase 0, T3 answered 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
 
 ### 9.3 Sleep, decided on the machine
 
@@ -729,7 +729,7 @@ The rejected mode A requested a fixed size, such as 2 cores and 8 GiB for $0.48 
 
 The $20 default budget buys about 200 awake hours at that average. Starter includes $30 of credits a month, so the default budget stays inside them.
 
-Costs come from `app.sandboxes.stats` grouped by the `t3modal` tag, which Phase 0 matched against the expected cost to within $0.0001 (§6.4). Snapshot storage has no published price. Phase 0 still has to read it from the workspace's usage page, and `t3modal status` shows it if it matters.
+Costs come from `app.sandboxes.stats` grouped by the `t3modal` tag, which Phase 0 matched against the expected cost to within $0.0001 (§6.4). Snapshot storage has no published price. Phase 3 reads it from the workspace's usage page, as §18 says for Q4. `t3modal status` shows it if it matters.
 
 ---
 
@@ -891,7 +891,7 @@ Still open:
 
 ## 19. Decisions
 
-Settled in the design review on 2026-11-18:
+Settled in the design review on 2026-11-18. Phase 0 revised 14 and added 16:
 
 | # | Decision | Record |
 |---|---|---|
@@ -900,7 +900,7 @@ Settled in the design review on 2026-11-18:
 | 3 | A personal tool first. macOS only in v1 | §1 |
 | 4 | Phase 0 runs before any product code | §16 |
 | 5 | Snapshots of the whole disk | §4.1 |
-| 6 | Memory sleeps on by default, behind a setting | §4.4 |
+| 6 | Memory sleeps, behind a setting. Decision 24 sets the default | §4.4 |
 | 7 | Standby after 5 idle minutes, for 1 hour | §4.4 |
 | 8 | Rerun recorded commands after a fresh boot | §4.4 |
 | 9 | One localhost port per machine. v1 captures only T3 Code's startup reads | §10 |

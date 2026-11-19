@@ -1,6 +1,6 @@
 # Phase 0 findings
 
-Results of the Phase 0 experiments, measured on the user's Modal Starter workspace on 2026-11-18 with Modal SDK 1.6.4 and T3 0.1.10. The scripts and raw JSON results live on the `phase-0` branch under `experiments/phase-0/`. What docs and source code say is in [phase-0-research.md](phase-0-research.md).
+Results of the Phase 0 experiments, measured on the user's Modal Starter workspace on 2026-11-18 with Modal SDK 1.6.4 and T3 0.1.10. Experiment 7 used T3 0.1.11-nightly. The scripts and raw JSON results live on the `phase-0` branch under `experiments/phase-0/`. What docs and source code say is in [phase-0-research.md](phase-0-research.md).
 
 ## Summary
 
@@ -24,7 +24,7 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 13 | Does Claude Code work through T3 with only `CLAUDE_CODE_OAUTH_TOKEN`? | Yes. T3 showed Claude Code as authenticated, and a thread answered in 2.6 s with no sign-in step | §11's token route works as written |
 | 14 | Does T3's Antigravity Google sign-in work on a machine? | No. Four separate blockers on a Linux machine with no screen. Three were worked around, and the fourth was still open when the user stopped the test | Antigravity leaves v1 |
 
-Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21.
+Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21. The stats put experiment 7 at $0.035, so experiments 1 to 7 cost about $0.25.
 
 ## Experiment 1: memory restore and the 24-hour clock
 
@@ -154,8 +154,8 @@ The terminal route, `antigravity acp --login`, needs no display. It prints a Goo
 ## What changes in the plan
 
 1. **Connect-token URLs replace public tunnels.** Each wake creates connect tokens for ports 3773 and 3774. The sandbox opens no `encrypted_ports`. Modal then turns away any request without the token, so the T3 environment and the daemon are no longer reachable by anyone who learns a URL. The proxy sends the token as a query parameter, because T3 needs the `Authorization` header for its own bearer. §5, §6.2, §9.2, §10 and §15.1 change. Still to check: how long a connect token lasts, and whether one sandbox can hold two tokens for different ports.
-2. **Every machine runs on `runtime="vm"`.** Memory sleeps need it, disk snapshots work on it, and the research found Docker works on it.
-3. **Wakes are fast.** A fresh boot took 4.4 s and a memory restore 1.7 s. The proxy's 90 s hold (§10.4) has plenty of margin.
+2. **Every machine runs on `runtime="vm"`.** `sudo`, Docker and cgroup CPU stats work only on it, Modal recommends it for memory snapshots, and disk snapshots work on it.
+3. **Wakes are fast.** A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical, and a memory restore 1.7 s. The proxy's 90 s hold (§10.4) has plenty of margin.
 4. **Rollover stays as planned.** Each wake gets a full timeout, so a machine that sleeps once a day never reaches the 24-hour limit.
 5. **Sizing mode B.** Every size requests 0.25 cores and 1 GiB and sets its limit by size. Standby stays on at about $0.06 an hour.
 6. **Docker moves from non-goals to supported.** It works on the VM runtime, which every machine now uses.
@@ -173,4 +173,9 @@ The terminal route, `antigravity acp --login`, needs no display. It prints a Goo
 | 4 | What snapshot storage costs | Modal publishes no price. Check the workspace's usage page after today's images expire |
 | 11 | The controller's cold start | Measured when Phase 1 deploys the controller |
 | 2 | Read speed after a memory restore, and on a second read after a fresh boot | Next small experiment |
-| 7 | WebSockets idle for 10 minutes or more | Next small experiment |
+| 7 | WebSockets idle for 10 minutes or more | Experiment 8 |
+| 15 | Every call T3 Code makes on connect | Recorded in Phase 4 |
+| 18 | How long a connect token lasts, and whether one sandbox holds tokens for two ports | Experiment 8 |
+| 19 | What a connect URL answers once its sandbox has ended | Experiment 8 |
+| 20 | Whether Claude's sign-in shows the paste-code step with nothing on its localhost port | Phase 2 |
+| 21 | Whether Docker's data survives a memory sleep and a disk sleep | Phase 2 |
