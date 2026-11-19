@@ -1,0 +1,31 @@
+{
+  "experiment": "exp05_cpu_burst",
+  "runs": [
+    {
+      "runtime": "vm",
+      "sandbox_id": "sb-01M7RQ2KFP0HG2CXE9R4XH94K8",
+      "nproc": "4",
+      "cgroup_cpu_max": "none",
+      "meminfo_total": "MemTotal:        2040712 kB",
+      "burst": {
+        "cpu_s": 239.8,
+        "wall_s": 60.0,
+        "cores_used": 4.0
+      },
+      "alloc_6gib": "allocated 6 GiB\nexit 0"
+    },
+    {
+      "runtime": "default",
+      "sandbox_id": "sb-01M7RQ86HHEB58CPXNNKBYX1DG",
+      "nproc": "4",
+      "cgroup_cpu_max": "none",
+      "meminfo_total": "MemTotal:        8388608 kB",
+      "burst": {
+        "cpu_s": 236.1,
+        "wall_s": 60.0,
+        "cores_used": 3.93
+      },
+      "alloc_6gib": "allocated 6 GiB\nexit 0"
+    }
+  ]
+}

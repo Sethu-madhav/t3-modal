@@ -1,0 +1,367 @@
+{
+  "experiment": "exp04_snapshot_chain",
+  "generations": [
+    {
+      "g": 1,
+      "boot_s": 8.5,
+      "snapshot_s": 7.8,
+      "image_id": "im-01M7RQ33JG2HCVNAEAN1Z71CN2",
+      "deleted": null
+    },
+    {
+      "g": 2,
+      "boot_s": 8.8,
+      "snapshot_s": 2.6,
+      "image_id": "im-01M7RQ3FCQ9TR2VH0Z3Z5QNF2M",
+      "deleted": null
+    },
+    {
+      "g": 3,
+      "boot_s": 5.2,
+      "snapshot_s": 2.1,
+      "image_id": "im-01M7RQ3Q4A6XC9V0ZRP6ZKPXNK",
+      "deleted": "im-01M7RQ33JG2HCVNAEAN1Z71CN2"
+    },
+    {
+      "g": 4,
+      "boot_s": 5.0,
+      "snapshot_s": 2.2,
+      "image_id": "im-01M7RQ3YN5BBADZGWG6PVTEY8P",
+      "deleted": "im-01M7RQ3FCQ9TR2VH0Z3Z5QNF2M"
+    },
+    {
+      "g": 5,
+      "boot_s": 5.6,
+      "snapshot_s": 2.1,
+      "image_id": "im-01M7RQ46YWNTWPRTF7HCF3B6ZM",
+      "deleted": "im-01M7RQ3Q4A6XC9V0ZRP6ZKPXNK"
+    },
+    {
+      "g": 6,
+      "boot_s": 4.3,
+      "snapshot_s": 3.8,
+      "image_id": "im-01M7RQ4FB95PNGN478P7G2AVY9",
+      "deleted": "im-01M7RQ3YN5BBADZGWG6PVTEY8P"
+    },
+    {
+      "g": 7,
+      "boot_s": 4.7,
+      "snapshot_s": 2.9,
+      "image_id": "im-01M7RQ4Q3SN19DFVS1S99DVJ5V",
+      "deleted": "im-01M7RQ46YWNTWPRTF7HCF3B6ZM"
+    },
+    {
+      "g": 8,
+      "boot_s": 8.8,
+      "snapshot_s": 2.7,
+      "image_id": "im-01M7RQ52YQ7WWA6NG6XSXXHM23",
+      "deleted": "im-01M7RQ4FB95PNGN478P7G2AVY9"
+    },
+    {
+      "g": 9,
+      "boot_s": 5.3,
+      "snapshot_s": 2.1,
+      "image_id": "im-01M7RQ5ANV54HZA4RKRXJM99C5",
+      "deleted": "im-01M7RQ4Q3SN19DFVS1S99DVJ5V"
+    },
+    {
+      "g": 10,
+      "boot_s": 6.2,
+      "snapshot_s": 2.2,
+      "image_id": "im-01M7RQ5K89MZ4S2T3K8EKW3FDT",
+      "deleted": "im-01M7RQ52YQ7WWA6NG6XSXXHM23"
+    },
+    {
+      "g": 11,
+      "boot_s": 4.4,
+      "snapshot_s": 2.2,
+      "image_id": "im-01M7RQ5T9PRP5ZJV2H09H6Z4Y7",
+      "deleted": "im-01M7RQ5ANV54HZA4RKRXJM99C5"
+    },
+    {
+      "g": 12,
+      "boot_s": 5.6,
+      "snapshot_s": 2.9,
+      "image_id": "im-01M7RQ632N715712HNRMZCG7G5",
+      "deleted": "im-01M7RQ5K89MZ4S2T3K8EKW3FDT"
+    },
+    {
+      "g": 13,
+      "boot_s": 5.1,
+      "snapshot_s": 1.6,
+      "image_id": "im-01M7RQ6A7CPRYHRE27RHAH7SHQ",
+      "deleted": "im-01M7RQ5T9PRP5ZJV2H09H6Z4Y7"
+    },
+    {
+      "g": 14,
+      "boot_s": 4.2,
+      "snapshot_s": 2.0,
+      "image_id": "im-01M7RQ6GZQ3FBBPPEV48QNPRS1",
+      "deleted": "im-01M7RQ632N715712HNRMZCG7G5"
+    },
+    {
+      "g": 15,
+      "boot_s": 4.5,
+      "snapshot_s": 2.1,
+      "image_id": "im-01M7RQ6R9B95H291W46Y2YRD09",
+      "deleted": "im-01M7RQ6A7CPRYHRE27RHAH7SHQ"
+    },
+    {
+      "g": 16,
+      "boot_s": 9.3,
+      "snapshot_s": 1.8,
+      "image_id": "im-01M7RQ73HXF8SK2G67MRXA6RB5",
+      "deleted": "im-01M7RQ6GZQ3FBBPPEV48QNPRS1"
+    },
+    {
+      "g": 17,
+      "boot_s": 7.0,
+      "snapshot_s": 2.8,
+      "image_id": "im-01M7RQ7DS7A108DT9KNYRXF92P",
+      "deleted": "im-01M7RQ6R9B95H291W46Y2YRD09"
+    },
+    {
+      "g": 18,
+      "boot_s": 5.6,
+      "snapshot_s": 3.7,
+      "image_id": "im-01M7RQ7Q7WY69NK1W8VC682961",
+      "deleted": "im-01M7RQ73HXF8SK2G67MRXA6RB5"
+    },
+    {
+      "g": 19,
+      "boot_s": 4.3,
+      "snapshot_s": 3.3,
+      "image_id": "im-01M7RQ7Z5RMR77S93XE5BWG318",
+      "deleted": "im-01M7RQ7DS7A108DT9KNYRXF92P"
+    },
+    {
+      "g": 20,
+      "boot_s": 7.7,
+      "snapshot_s": 2.7,
+      "image_id": "im-01M7RQ8A3JYDZJXJ407H1VYD30",
+      "deleted": "im-01M7RQ7Q7WY69NK1W8VC682961"
+    },
+    {
+      "g": 21,
+      "boot_s": 5.0,
+      "snapshot_s": 1.4,
+      "image_id": "im-01M7RQ8GWZ56AJTSJ929Q2NP3X",
+      "deleted": "im-01M7RQ7Z5RMR77S93XE5BWG318"
+    },
+    {
+      "g": 22,
+      "boot_s": 6.8,
+      "snapshot_s": 1.5,
+      "image_id": "im-01M7RQ8SA1B718AKAEZRQZWYTT",
+      "deleted": "im-01M7RQ8A3JYDZJXJ407H1VYD30"
+    },
+    {
+      "g": 23,
+      "boot_s": 5.3,
+      "snapshot_s": 2.7,
+      "image_id": "im-01M7RQ91CFDKYTNAT4N24NGA3X",
+      "deleted": "im-01M7RQ8GWZ56AJTSJ929Q2NP3X"
+    },
+    {
+      "g": 24,
+      "boot_s": 4.2,
+      "snapshot_s": 3.0,
+      "image_id": "im-01M7RQ98ZYP0ZQDDE0BAQGTBF8",
+      "deleted": "im-01M7RQ8SA1B718AKAEZRQZWYTT"
+    },
+    {
+      "g": 25,
+      "boot_s": 4.6,
+      "snapshot_s": 2.7,
+      "image_id": "im-01M7RQ9GJ9W1M3WTE65N9MET05",
+      "deleted": "im-01M7RQ91CFDKYTNAT4N24NGA3X"
+    },
+    {
+      "g": 26,
+      "boot_s": 4.6,
+      "snapshot_s": 4.0,
+      "image_id": "im-01M7RQ9SDKT7BSZRNXEXQ4S60H",
+      "deleted": "im-01M7RQ98ZYP0ZQDDE0BAQGTBF8"
+    },
+    {
+      "g": 27,
+      "boot_s": 5.1,
+      "snapshot_s": 1.6,
+      "image_id": "im-01M7RQA0AVNWWS9BYV4VC7G4G4",
+      "deleted": "im-01M7RQ9GJ9W1M3WTE65N9MET05"
+    },
+    {
+      "g": 28,
+      "boot_s": 5.0,
+      "snapshot_s": 4.4,
+      "image_id": "im-01M7RQA9YM2PXBS3AAVY59CQCQ",
+      "deleted": "im-01M7RQ9SDKT7BSZRNXEXQ4S60H"
+    },
+    {
+      "g": 29,
+      "boot_s": 7.7,
+      "snapshot_s": 1.8,
+      "image_id": "im-01M7RQAKQD1A4E0RDH52PMN0N9",
+      "deleted": "im-01M7RQA0AVNWWS9BYV4VC7G4G4"
+    },
+    {
+      "g": 30,
+      "boot_s": 4.7,
+      "snapshot_s": 2.4,
+      "image_id": "im-01M7RQAV3A765PH340V412QPZN",
+      "deleted": "im-01M7RQA9YM2PXBS3AAVY59CQCQ"
+    },
+    {
+      "g": 31,
+      "boot_s": 9.6,
+      "snapshot_s": 5.7,
+      "image_id": "im-01M7RQBBH452TMAS8GNQT1PHNK",
+      "deleted": "im-01M7RQAKQD1A4E0RDH52PMN0N9"
+    },
+    {
+      "g": 32,
+      "boot_s": 5.2,
+      "snapshot_s": 2.8,
+      "image_id": "im-01M7RQBMAKEXEFRPY5QWZ71CMN",
+      "deleted": "im-01M7RQAV3A765PH340V412QPZN"
+    },
+    {
+      "g": 33,
+      "boot_s": 4.5,
+      "snapshot_s": 2.3,
+      "image_id": "im-01M7RQBVQAMPB85AE7R15XXFDT",
+      "deleted": "im-01M7RQBBH452TMAS8GNQT1PHNK"
+    },
+    {
+      "g": 34,
+      "boot_s": 5.1,
+      "snapshot_s": 2.8,
+      "image_id": "im-01M7RQC3VW444HVWMEJS3BZH90",
+      "deleted": "im-01M7RQBMAKEXEFRPY5QWZ71CMN"
+    },
+    {
+      "g": 35,
+      "boot_s": 5.8,
+      "snapshot_s": 3.6,
+      "image_id": "im-01M7RQCDFF0VZRV2MEZN92TWSS",
+      "deleted": "im-01M7RQBVQAMPB85AE7R15XXFDT"
+    },
+    {
+      "g": 36,
+      "boot_s": 5.1,
+      "snapshot_s": 3.0,
+      "image_id": "im-01M7RQCP1019BMJGVWAJRTZR2C",
+      "deleted": "im-01M7RQC3VW444HVWMEJS3BZH90"
+    },
+    {
+      "g": 37,
+      "boot_s": 5.2,
+      "snapshot_s": 2.3,
+      "image_id": "im-01M7RQCXVMHD74AFJ69PN3JMH5",
+      "deleted": "im-01M7RQCDFF0VZRV2MEZN92TWSS"
+    },
+    {
+      "g": 38,
+      "boot_s": 6.3,
+      "snapshot_s": 3.7,
+      "image_id": "im-01M7RQD85XMMCX1S7RVJR8WQVQ",
+      "deleted": "im-01M7RQCP1019BMJGVWAJRTZR2C"
+    },
+    {
+      "g": 39,
+      "boot_s": 4.2,
+      "snapshot_s": 3.3,
+      "image_id": "im-01M7RQDFVKX51FKFBMT1F5MVTZ",
+      "deleted": "im-01M7RQCXVMHD74AFJ69PN3JMH5"
+    },
+    {
+      "g": 40,
+      "boot_s": 6.2,
+      "snapshot_s": 2.5,
+      "image_id": "im-01M7RQDS3ENZ5G30SK0MFZBPED",
+      "deleted": "im-01M7RQD85XMMCX1S7RVJR8WQVQ"
+    },
+    {
+      "g": 41,
+      "boot_s": 4.3,
+      "snapshot_s": 2.3,
+      "image_id": "im-01M7RQE04R4A1CAB1MG4ZA6PM6",
+      "deleted": "im-01M7RQDFVKX51FKFBMT1F5MVTZ"
+    },
+    {
+      "g": 42,
+      "boot_s": 4.9,
+      "snapshot_s": 2.3,
+      "image_id": "im-01M7RQE7PAK8CMCEXHJJ7FKJBR",
+      "deleted": "im-01M7RQDS3ENZ5G30SK0MFZBPED"
+    },
+    {
+      "g": 43,
+      "boot_s": 6.7,
+      "snapshot_s": 1.9,
+      "image_id": "im-01M7RQEH0887C5NTB2FRPRZ48T",
+      "deleted": "im-01M7RQE04R4A1CAB1MG4ZA6PM6"
+    },
+    {
+      "g": 44,
+      "boot_s": 11.0,
+      "snapshot_s": 1.8,
+      "image_id": "im-01M7RQEYEHC5YJACPFGQRCCJ24",
+      "deleted": "im-01M7RQE7PAK8CMCEXHJJ7FKJBR"
+    },
+    {
+      "g": 45,
+      "boot_s": 6.3,
+      "snapshot_s": 2.2,
+      "image_id": "im-01M7RQF7C716RKM8HY2KB16K85",
+      "deleted": "im-01M7RQEH0887C5NTB2FRPRZ48T"
+    },
+    {
+      "g": 46,
+      "boot_s": 4.6,
+      "snapshot_s": 1.6,
+      "image_id": "im-01M7RQFDW8GJMBPYJF4JYC3C9W",
+      "deleted": "im-01M7RQEYEHC5YJACPFGQRCCJ24"
+    },
+    {
+      "g": 47,
+      "boot_s": 4.6,
+      "snapshot_s": 2.5,
+      "image_id": "im-01M7RQFN5Q03VTNJK1KSBDSHFT",
+      "deleted": "im-01M7RQF7C716RKM8HY2KB16K85"
+    },
+    {
+      "g": 48,
+      "boot_s": 4.8,
+      "snapshot_s": 1.5,
+      "image_id": "im-01M7RQFVSMN2GXCJX721A1C1E7",
+      "deleted": "im-01M7RQFDW8GJMBPYJF4JYC3C9W"
+    },
+    {
+      "g": 49,
+      "boot_s": 4.6,
+      "snapshot_s": 5.9,
+      "image_id": "im-01M7RQG6CMMSJ0Y7A0GDJBW615",
+      "deleted": "im-01M7RQFN5Q03VTNJK1KSBDSHFT"
+    },
+    {
+      "g": 50,
+      "boot_s": 4.6,
+      "snapshot_s": 2.4,
+      "image_id": "im-01M7RQGDQTS84569HH8YJD9JDN",
+      "deleted": "im-01M7RQFVSMN2GXCJX721A1C1E7"
+    }
+  ],
+  "final": {
+    "boot_s": 4.9,
+    "generation_files": "50",
+    "log_lines": "50",
+    "log_in_order": "yes"
+  },
+  "trend": {
+    "boot_first_10pct_avg": 6.6,
+    "boot_last_10pct_avg": 4.6,
+    "snapshot_first_10pct_avg": 3.4,
+    "snapshot_last_10pct_avg": 2.8
+  }
+}

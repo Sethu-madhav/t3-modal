@@ -1,0 +1,40 @@
+{
+  "experiment": "exp03_large_snapshot",
+  "steps": [
+    {
+      "label": "5 GB random",
+      "ok": true,
+      "seconds": 8.9,
+      "image_id": "im-01M7RQ3988Y4D0Z5CQF08B4EAX",
+      "disk_used": "/dev/root       504G  6.2G  498G   2% /"
+    },
+    {
+      "label": "10 GB random",
+      "ok": true,
+      "seconds": 9.1,
+      "image_id": "im-01M7RQ3YTMYDVNT0T9EZZ39BZH",
+      "disk_used": "/dev/root       504G   12G  493G   3% /"
+    },
+    {
+      "label": "20 GB random",
+      "ok": true,
+      "seconds": 15.4,
+      "image_id": "im-01M7RQ56S9ZMDKCP5JB560DGZN",
+      "disk_used": "/dev/root       504G   22G  483G   5% /"
+    },
+    {
+      "label": "20 GB random plus 200k files of 4 KB",
+      "ok": true,
+      "seconds": 198.9,
+      "image_id": "im-01M7RQBHBXR81PFTX7KS7XZG0T",
+      "disk_used": "/dev/root       504G   22G  483G   5% /"
+    }
+  ],
+  "fresh_boot": {
+    "t3_ready_s": 6.0,
+    "read_1gb_s": 25.8,
+    "read_all_20gb_s": 462.7,
+    "walk_200k_files_s": 0.2,
+    "files_found": "200000"
+  }
+}
