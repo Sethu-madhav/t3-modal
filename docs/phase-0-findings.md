@@ -22,7 +22,7 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 9 | What works inside a sandbox? | See the table under experiment 6. Docker, `sudo` and cgroup CPU stats work only on `runtime="vm"` | VM runtime for every machine |
 | 10 | Does `t3 serve` run as a non-root user without systemd? | Yes, on both runtimes. Its log had no keep-awake or systemd lines | §7.2 works as written |
 
-Six experiments cost about $0.25 in total, measured with Modal's per-tag stats.
+Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21.
 
 ## Experiment 1: memory restore and the 24-hour clock
 
