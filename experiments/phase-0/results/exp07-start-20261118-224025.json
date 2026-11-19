@@ -1,0 +1,6 @@
+{
+  "anthropic_api_key_set": "no",
+  "token_env_set": "yes",
+  "claude_prompt_as_t3": "Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.\nok",
+  "t3_version": "t3 v0.1.11-nightly.20261118.4903"
+}

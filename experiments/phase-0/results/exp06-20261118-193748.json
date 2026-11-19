@@ -1,0 +1,35 @@
+{
+  "experiment": "exp06_runtime_checks",
+  "runs": [
+    {
+      "runtime": "vm",
+      "t3_ready_as_non_root_s": 4.9,
+      "proc_stat_cpu_line": "cpu  355 0 114 44495 58 0 16 1 0 0",
+      "proc_stat_changes": "yes",
+      "cgroup_cpu_stat": "usage_usec 4885794 user_usec 3563385 system_usec 1322409",
+      "node_version": "v22.23.5",
+      "node_sqlite": "(Use `node --trace-warnings ...` to show where the warning was created)",
+      "script_tty": "/dev/pts/0",
+      "sudo_as_t3": "root",
+      "t3_runs_as": "root     sh -c su - t3 -c 't3 serve --host 0.0.0.0 --port 3773 > /home/t3/t3.log 2>&1' & sleep infinity",
+      "t3_keepawake_log": "0",
+      "claude_version_as_t3": "2.1.328 (Claude Code)",
+      "docker": "Hello from Docker!"
+    },
+    {
+      "runtime": "default",
+      "t3_ready_as_non_root_s": 9.9,
+      "proc_stat_cpu_line": "cpu  826 0 289 72541 0 0 0 0 0 0",
+      "proc_stat_changes": "yes",
+      "cgroup_cpu_stat": "head: cannot open '/sys/fs/cgroup/cpu.stat' for reading: No such file or directory",
+      "node_version": "v22.23.5",
+      "node_sqlite": "(Use `node --trace-warnings ...` to show where the warning was created)",
+      "script_tty": "/dev/pts/0",
+      "sudo_as_t3": "sudo: The \"no new privileges\" flag is set, which prevents sudo from running as root.\nsudo: If sudo is running in a container, you may need to adjust the container configuration to disable the flag.",
+      "t3_runs_as": "root     /bin/dumb-init -- sh -c su - t3 -c 't3 serve --host 0.0.0.0 --port 3773 > /home/t3/t3.log 2>&1' & sleep infinity",
+      "t3_keepawake_log": "0",
+      "claude_version_as_t3": "2.1.328 (Claude Code)",
+      "docker": "FAILED\ntime=\"2026-11-19T01:37:17.809471434Z\" level=info msg=\"[core] Channel Connectivity change to TRANSIENT_FAILURE\" module=grpc\nfailed to start daemon: Error initializing network controller: error obtaining controller instance: failed to create NAT chain DOCKER: iptables failed: iptables -t nat -N DOCKER: iptables: Failed to initialize nft: Protocol not supported\n (exit status 1)"
+    }
+  ]
+}

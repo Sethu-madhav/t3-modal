@@ -1,9 +1,10 @@
 """PROTOTYPE, throwaway. Shared helpers for the Phase 0 experiments.
 
-Lives on the phase-0 branch only. See experiments/phase-0/README.md.
+Kept as the record of Phase 0. See experiments/phase-0/README.md.
 """
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -39,10 +40,17 @@ image = (
 )
 
 _T0 = time.time()
+# Connect tokens and WebSocket tickets travel in URLs, and an exception message
+# can quote the URL. Everything logged or saved goes through redact().
+_SECRET = re.compile(r"(_modal_connect_token=|wsTicket=)[^&\s'\"\\]+|sk-ant-[A-Za-z0-9_-]+")
+
+
+def redact(text: str) -> str:
+    return _SECRET.sub(lambda m: (m.group(1) or "") + "[REDACTED]", text)
 
 
 def log(msg: str) -> None:
-    print(f"[{time.time() - _T0:7.1f}s] {msg}", flush=True)
+    print(redact(f"[{time.time() - _T0:7.1f}s] {msg}"), flush=True)
 
 
 def http(url: str, *, method: str = "GET", headers: dict | None = None, timeout: float = 15):
@@ -79,6 +87,6 @@ def sh(sb: modal.Sandbox, cmd: str) -> str:
 def save(name: str, result: dict) -> Path:
     RESULTS.mkdir(exist_ok=True)
     path = RESULTS / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.json"
-    path.write_text(json.dumps(result, indent=2, default=str))
+    path.write_text(redact(json.dumps(result, indent=2, default=str)))
     log(f"results written to {path}")
     return path

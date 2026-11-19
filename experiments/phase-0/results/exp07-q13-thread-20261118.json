@@ -1,0 +1,15 @@
+{
+  "experiment": "exp07_signins",
+  "question": "Q13",
+  "how": "User paired T3 Code (Nightly) with the sandbox by pasting a pairing link, created project modal-t3, and sent 'hi' to Claude Code with the Haiku model.",
+  "credential": "CLAUDE_CODE_OAUTH_TOKEN only, ANTHROPIC_API_KEY unset",
+  "user_message_at": "2026-11-19T04:31:50.898Z",
+  "workspace_ready_s": 0.06,
+  "assistant_reply_at": "2026-11-19T04:31:53.454Z",
+  "reply_s": 2.6,
+  "result": "pass, Claude Code answered through T3 with no sign-in step",
+  "side_findings": [
+    "The t3code:// deep link did nothing. Pasting the pairing link into Settings, Environments, Add environment worked.",
+    "A fresh machine has no git user.name or user.email, so T3 created the project without a first commit. Setting a placeholder identity fixed it."
+  ]
+}
