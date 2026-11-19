@@ -1,6 +1,6 @@
 # Phase 0 findings
 
-Results of the Phase 0 experiments, measured on the user's Modal Starter workspace on 2026-11-18 with Modal SDK 1.6.4 and T3 0.1.10. Experiment 7 used T3 0.1.11-nightly. The scripts and raw JSON results are in `experiments/phase-0/`. What docs and source code say is in [phase-0-research.md](phase-0-research.md).
+Results of the Phase 0 experiments, measured on the user's Modal Starter workspace on 2026-11-18 and 2026-11-19 with Modal SDK 1.6.4 and T3 0.1.10. Experiment 7 used T3 0.1.11-nightly. The scripts and raw JSON results are in `experiments/phase-0/`. What docs and source code say is in [phase-0-research.md](phase-0-research.md).
 
 ## Summary
 
@@ -9,8 +9,8 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 5 | Do T3 and other processes survive a memory snapshot and restore? | Yes. Same PIDs, same boot ID, and the kernel's uptime continues. T3 answered 1.7 s after the restore call | Memory sleep works as §4.4 describes |
 | 5 | Does `snapshot_filesystem` work on a `runtime="vm"` sandbox? | Yes, in 3.8 s on a small disk. A default-runtime sandbox booted from that image | One runtime for every machine: VM |
 | 5 | Does a restore get a new timeout? | Yes. The restored sandbox ended 366 s after the restore, against a 360 s timeout | Rollover counts from the latest wake, as §9.6 assumes |
-| 2 | How long does a wake take? | Memory restore: 1.7 s to T3 answering. Fresh boot from a cached image on the VM runtime: 4.2 to 11.0 s, 5.1 s typical | Much faster than the 30 s the plan allowed |
-| 8 | What does an ended sandbox's tunnel answer? | No HTTP answer. The connection closes with nothing sent, both 4 s and 24 s after the end | The proxy treats a closed connection as "maybe asleep" and asks the controller (§9.4) |
+| 2 | How long does a wake take? | Memory restore: 0.9 to 1.7 s to T3 answering, in experiments 1 and 8. Fresh boot from a cached image on the VM runtime: 4.2 to 11.0 s, 5.1 s typical | Much faster than the 30 s the plan allowed |
+| 8 | What does an ended sandbox's tunnel answer? | No HTTP answer. The connection closes with nothing sent, both 4 s and 24 s after the end | Tunnels give the proxy no way to tell an ended sandbox from a network error. Connect URLs answer 404 instead, see Q19 |
 | 16 | Does T3 work through a connect-token URL? | Yes, for HTTP and the WebSocket. Without the token Modal answers 401 | Use connect-token URLs instead of tunnels (see below) |
 | 7 | Do idle WebSockets stay open? | Yes, 75 s idle through both routes in experiment 2, and 30 minutes through a connect URL in experiment 8. A ping still worked | No keepalive pings |
 | 1 | How long does a disk snapshot take? | 9 s for 5 GB, 9 s for 10 GB, 15 s for 20 GB of new random data. 199 s for 200,000 new files of 4 KB | File count matters far more than size. The 600 s timeout holds |
@@ -168,7 +168,7 @@ Script: `experiments/phase-0/exp08_connect_tokens.py`. A VM sandbox requested 0.
 | A WebSocket idle for 30 minutes | Stayed open and answered a ping |
 | Old URLs after a memory snapshot | 404 |
 | A memory restore | T3 answered in 0.9 s with the same environment. The restore got a new URL. The old token got 401 on it, and a new token worked |
-| The connect URL after terminate | 404 "Sandbox not found", 2 s and 20 s after |
+| The connect URL after terminate | 404 "Sandbox not found", 2 s and about 22 s after. The results file records the second wait as 20 |
 
 The no-answer at 30 minutes came right after the WebSocket that used the same token closed. The other 3773 token worked at the same moment. One run can't show the cause, so the proxy retries once after no answer.
 
@@ -176,7 +176,7 @@ The no-answer at 30 minutes came right after the WebSocket that used the same to
 
 1. **Connect-token URLs replace public tunnels.** Each wake creates connect tokens for ports 3773 and 3774. The sandbox opens no `encrypted_ports`. Modal then turns away any request without the token, so the T3 environment and the daemon are no longer reachable by anyone who learns a URL. The proxy sends the token as a query parameter, because T3 needs the `Authorization` header for its own bearer. §5, §6.2, §9.2, §10 and §15.1 change. Experiment 8 later confirmed tokens for two ports on one VM sandbox, still valid after 90 minutes.
 2. **Every machine runs on `runtime="vm"`.** `sudo`, Docker and cgroup CPU stats work only on it, Modal recommends it for memory snapshots, and disk snapshots work on it.
-3. **Wakes are fast.** A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical, and a memory restore 1.7 s. The proxy's 90 s hold (§10.4) has plenty of margin.
+3. **Wakes are fast.** A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical, and a memory restore 0.9 to 1.7 s. The proxy's 90 s hold (§10.4) has plenty of margin.
 4. **Rollover stays as planned.** Each wake gets a full timeout, so a machine that sleeps once a day never reaches the 24-hour limit.
 5. **Sizing mode B.** Every size requests 0.25 cores and 1 GiB and sets its limit by size. Standby stays on at about $0.06 an hour.
 6. **Docker moves from non-goals to supported.** It works on the VM runtime, which every machine now uses.
@@ -184,9 +184,9 @@ The no-answer at 30 minutes came right after the WebSocket that used the same to
 8. **Memory sleep matters more than planned.** A fresh boot reads file contents at about 44 MB/s the first time, so the first build after a disk sleep is slow. Disk sleeps should stay rare.
 9. **Sleeps after big installs can take minutes.** Snapshot time follows file count. The daemon should report "saving" in its status so the laptop can show it.
 10. **Antigravity leaves v1.** The user dropped it after the Google sign-in failed on a machine. v1 ships with one provider, Claude Code. Antigravity with a Gemini API key was not tested and can come back later. §1, §2, §7, §11, §16, §17 and §19 change.
-11. **Each machine gets a git identity when it is created.** Without one, T3 cannot make a project's first commit.
+11. **Each machine has a git identity from its first boot.** Without one, T3 cannot make a project's first commit. The image has a placeholder in `/etc/gitconfig`, and `init.sh` replaces it from the GitHub Secret at every boot.
 12. **Pairing shows a link to paste.** The `t3code://` deep link did nothing, so `t3modal` prints the pairing link and the user pastes it into T3 Code.
-13. **Each port gets its own connect token, and the controller refreshes tokens.** Experiment 8 confirmed connect tokens on the VM runtime. A restore needs new tokens, so the laptop asks the controller for fresh ones after a 401. ADR 0003 records this.
+13. **Each port gets its own connect token, and the controller refreshes tokens.** Experiment 8 confirmed connect tokens on the VM runtime. Every wake, including a memory restore, gets new URLs and tokens from the controller. If Modal answers 401 on a running sandbox, the laptop asks the controller for fresh tokens. ADR 0003 records this.
 14. **The proxy reads Modal's answers.** A 404 "Sandbox not found" means the sandbox ended, a 401 means the token needs a refresh, and no answer gets one retry.
 15. **No WebSocket keepalive pings.** A 30-minute idle WebSocket stayed open.
 
