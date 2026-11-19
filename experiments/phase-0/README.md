@@ -13,5 +13,6 @@ Each script answers questions from `implementation.md` §18 against the real Mod
 | `exp05_cpu_burst.py` | 6, 12 | $0.02 |
 | `exp06_runtime_checks.py` | 9, 10 | $0.02 |
 | `exp07_signins.py` | 13, 14. Needs a `claude setup-token` token and the user in T3 Code | $0.06 an hour while running |
+| `exp08_connect_tokens.py` | 7, 18, 19. Runs about 90 minutes | $0.10 |
 
 Run one with `uv run experiments/phase-0/<script>.py`. It needs a Modal token in `~/.modal.toml`. Results go to `results/` as JSON.

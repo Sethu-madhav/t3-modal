@@ -12,7 +12,7 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 2 | How long does a wake take? | Memory restore: 1.7 s to T3 answering. Fresh boot from a cached image on the VM runtime: 4.2 to 11.0 s, 5.1 s typical | Much faster than the 30 s the plan allowed |
 | 8 | What does an ended sandbox's tunnel answer? | No HTTP answer. The connection closes with nothing sent, both 4 s and 24 s after the end | The proxy treats a closed connection as "maybe asleep" and asks the controller (§9.4) |
 | 16 | Does T3 work through a connect-token URL? | Yes, for HTTP and the WebSocket. Without the token Modal answers 401 | Use connect-token URLs instead of tunnels (see below) |
-| 7 | Do idle WebSockets stay open? | Yes, 75 s idle through both routes, and a ping still worked | No keepalive needed at this scale. A longer idle test comes later |
+| 7 | Do idle WebSockets stay open? | Yes, 75 s idle through both routes in experiment 2, and 30 minutes through a connect URL in experiment 8. A ping still worked | No keepalive pings |
 | 1 | How long does a disk snapshot take? | 9 s for 5 GB, 9 s for 10 GB, 15 s for 20 GB of new random data. 199 s for 200,000 new files of 4 KB | File count matters far more than size. The 600 s timeout holds |
 | 2 | How fast is the disk after a fresh boot? | T3 answered in 6 s from a 22 GB image, but the first read of file contents ran at about 44 MB/s. Listing 200,000 files took 0.2 s | Modal loads image data lazily. The first build after a disk sleep is slow |
 | 3 | Does a 50-image chain slow down or break? | No. Boots averaged 6.6 s in the first 5 generations and 4.6 s in the last 5. Snapshots took 3.4 s and 2.8 s. All 50 generations' data was present | Long chains are safe |
@@ -22,9 +22,11 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 9 | What works inside a sandbox? | See the table under experiment 6. Docker, `sudo` and cgroup CPU stats work only on `runtime="vm"` | VM runtime for every machine |
 | 10 | Does `t3 serve` run as a non-root user without systemd? | Yes, on both runtimes. Its log had no keep-awake or systemd lines | §7.2 works as written |
 | 13 | Does Claude Code work through T3 with only `CLAUDE_CODE_OAUTH_TOKEN`? | Yes. T3 showed Claude Code as authenticated, and a thread answered in 2.6 s with no sign-in step | §11's token route works as written |
+| 18 | Do connect tokens work on the VM runtime, for two ports, and for how long? | Yes, with no declared ports. Tokens for 3773 and 3774 work at once. A second token for a port leaves the first valid. Every token still worked at 90 minutes | One token per port. The controller refreshes tokens after a 401 |
+| 19 | What does an ended sandbox's connect URL answer? | 404 "Sandbox not found" within 2 s | The proxy can tell an ended sandbox from a network error |
 | 14 | Does T3's Antigravity Google sign-in work on a machine? | No. Four separate blockers on a Linux machine with no screen. Three were worked around, and the fourth was still open when the user stopped the test | Antigravity leaves v1 |
 
-Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21. The stats put experiment 7 at $0.035, so experiments 1 to 7 cost about $0.25.
+Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21. The stats put experiment 7 at $0.035, so experiments 1 to 7 cost about $0.25. Experiment 8 ran about 90 minutes at the 0.25-core request, for about $0.10.
 
 ## Experiment 1: memory restore and the 24-hour clock
 
@@ -151,9 +153,28 @@ The terminal route, `antigravity acp --login`, needs no display. It prints a Goo
 - A new machine has no git `user.name` or `user.email`, so T3 created a project without its first commit. A placeholder identity fixed it.
 - `pkill -f 't3 serve'` also matches the sandbox's own start command, whose text contains the same words, and ends the sandbox with exit code 143. Stopping T3 must match only the `t3` user's processes.
 
+## Experiment 8: connect tokens on a VM sandbox
+
+Script: `experiments/phase-0/exp08_connect_tokens.py`. A VM sandbox requested 0.25 cores and 1 GiB with memory snapshots enabled and no declared ports. T3 listened on 3773, and a plain HTTP server stood in for the daemon on 3774. The script made a token for each port, then a second token for 3773.
+
+| Check | Result |
+|---|---|
+| T3 through its connect URL | 200, 5.2 s after create |
+| Tokens for both ports at once | Both 200. Each port has its own URL |
+| A token on the other port's URL | 403 |
+| No token | 401 on both URLs |
+| A second token for 3773 | Same URL. Both tokens worked |
+| Every token at 30, 60 and 90 minutes | 200, except one no-answer for the first 3773 token at 30 minutes. It worked again at 60 and 90 |
+| A WebSocket idle for 30 minutes | Stayed open and answered a ping |
+| Old URLs after a memory snapshot | 404 |
+| A memory restore | T3 answered in 0.9 s with the same environment. The restore got a new URL. The old token got 401 on it, and a new token worked |
+| The connect URL after terminate | 404 "Sandbox not found", 2 s and 20 s after |
+
+The no-answer at 30 minutes came right after the WebSocket that used the same token closed. The other 3773 token worked at the same moment. One run can't show the cause, so the proxy retries once after no answer.
+
 ## What changes in the plan
 
-1. **Connect-token URLs replace public tunnels.** Each wake creates connect tokens for ports 3773 and 3774. The sandbox opens no `encrypted_ports`. Modal then turns away any request without the token, so the T3 environment and the daemon are no longer reachable by anyone who learns a URL. The proxy sends the token as a query parameter, because T3 needs the `Authorization` header for its own bearer. §5, §6.2, §9.2, §10 and §15.1 change. Still to check: how long a connect token lasts, and whether one sandbox can hold two tokens for different ports.
+1. **Connect-token URLs replace public tunnels.** Each wake creates connect tokens for ports 3773 and 3774. The sandbox opens no `encrypted_ports`. Modal then turns away any request without the token, so the T3 environment and the daemon are no longer reachable by anyone who learns a URL. The proxy sends the token as a query parameter, because T3 needs the `Authorization` header for its own bearer. §5, §6.2, §9.2, §10 and §15.1 change. Experiment 8 later confirmed tokens for two ports on one VM sandbox, still valid after 90 minutes.
 2. **Every machine runs on `runtime="vm"`.** `sudo`, Docker and cgroup CPU stats work only on it, Modal recommends it for memory snapshots, and disk snapshots work on it.
 3. **Wakes are fast.** A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical, and a memory restore 1.7 s. The proxy's 90 s hold (§10.4) has plenty of margin.
 4. **Rollover stays as planned.** Each wake gets a full timeout, so a machine that sleeps once a day never reaches the 24-hour limit.
@@ -165,6 +186,9 @@ The terminal route, `antigravity acp --login`, needs no display. It prints a Goo
 10. **Antigravity leaves v1.** The user dropped it after the Google sign-in failed on a machine. v1 ships with one provider, Claude Code. Antigravity with a Gemini API key was not tested and can come back later. §1, §2, §7, §11, §16, §17 and §19 change.
 11. **Each machine gets a git identity when it is created.** Without one, T3 cannot make a project's first commit.
 12. **Pairing shows a link to paste.** The `t3code://` deep link did nothing, so `t3modal` prints the pairing link and the user pastes it into T3 Code.
+13. **Each port gets its own connect token, and the controller refreshes tokens.** Experiment 8 confirmed connect tokens on the VM runtime. A restore needs new tokens, so the laptop asks the controller for fresh ones after a 401. ADR 0003 records this.
+14. **The proxy reads Modal's answers.** A 404 "Sandbox not found" means the sandbox ended, a 401 means the token needs a refresh, and no answer gets one retry.
+15. **No WebSocket keepalive pings.** A 30-minute idle WebSocket stayed open.
 
 ## Still to run
 
@@ -173,9 +197,6 @@ The terminal route, `antigravity acp --login`, needs no display. It prints a Goo
 | 4 | What snapshot storage costs | Modal publishes no price. Check the workspace's usage page after today's images expire |
 | 11 | The controller's cold start | Measured when Phase 1 deploys the controller |
 | 2 | Read speed after a memory restore, and on a second read after a fresh boot | Next small experiment |
-| 7 | WebSockets idle for 10 minutes or more | Experiment 8 |
 | 15 | Every call T3 Code makes on connect | Recorded in Phase 4 |
-| 18 | How long a connect token lasts, and whether one sandbox holds tokens for two ports | Experiment 8 |
-| 19 | What a connect URL answers once its sandbox has ended | Experiment 8 |
 | 20 | Whether Claude's sign-in shows the paste-code step with nothing on its localhost port | Phase 2 |
 | 21 | Whether Docker's data survives a memory sleep and a disk sleep | Phase 2 |
