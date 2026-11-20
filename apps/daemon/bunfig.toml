@@ -1,0 +1,3 @@
+[test]
+# The daemon runs on Node, so its tests run with node --test, never bun test.
+pathIgnorePatterns = ["**"]

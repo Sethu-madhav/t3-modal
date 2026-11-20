@@ -1,0 +1,6 @@
+{
+  "name": "@t3modal/service",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@t3modal/shared": "workspace:*" }
+}
