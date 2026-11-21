@@ -7,8 +7,9 @@
 #   first free port from 3773, and without --host it doesn't listen on the sandbox's interface.
 # - The daemon as t3 on port 3774, from ~/.t3modal/daemon.mjs once provisioning installs one, or
 #   /opt/t3modal/daemon.mjs before. It inherits this script's environment, which holds the
-#   machine's T3MODAL_ variables and MODAL_SANDBOX_ID. T3 starts with an empty environment, so its
-#   agents don't get the machine secret by accident. They run as t3 with sudo, so this is no wall.
+#   machine's T3MODAL_ variables and MODAL_SANDBOX_ID. T3 gets none of this script's environment
+#   but CLAUDE_CODE_OAUTH_TOKEN (§11.3), so its agents don't get the machine secret or an
+#   ANTHROPIC_API_KEY by accident. They run as t3 with sudo, so this is no wall.
 # - dockerd as root. T3 doesn't wait for it.
 # Each loop records its process's PID in ~/.t3modal/<name>.pid, so the daemon can stop T3 by PID
 # (§7.2), and leaves the process stopped while ~/.t3modal/<name>.hold exists. A process that keeps
@@ -24,19 +25,33 @@ LOGS=/var/log/t3modal
 mkdir -p "$STATE" "$LOGS"
 chown "$T3_USER:$T3_USER" "$STATE"
 
-# run_as <how> <command...>: replaces this shell with the command. how is root, t3 for t3 with an
-# empty environment, or t3+env for t3 with this script's environment. Secrets never go in argv.
+# T3_KEEPS: the variables T3 gets from this script's environment.
+T3_KEEPS="CLAUDE_CODE_OAUTH_TOKEN"
+
+# keep_only <name...>: unsets every exported variable but these. It handles names only, so no value
+# reaches a command line. env -0 ends each variable with a NUL, and tr turns the newlines inside
+# values into spaces, so a line in a value can't pass for a variable and unset one of this script's.
+keep_only() {
+  for v in $(env -0 | tr '\n\0' ' \n' | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
+    case " $* " in
+      *" $v "*) ;;
+      *) unset "$v" ;;
+    esac
+  done
+}
+
+# run_as <how> <command...>: replaces this shell with the command. how is root, t3 for t3 with only
+# the T3_KEEPS variables, or t3+env for t3 with this script's environment. Secrets never go in argv.
 run_as() {
   how=$1
   shift
   case $how in
     root) exec "$@" ;;
-    t3) reset=--reset-env ;;
-    t3+env) reset= ;;
+    t3) keep_only PATH $T3_KEEPS ;;  # PATH finds setpriv, and env below replaces it
+    t3+env) ;;
     *) echo "run_as: unknown $how" >&2; exit 1 ;;
   esac
-  # $reset is unquoted on purpose, so an empty value adds no argument.
-  exec setpriv --reuid="$T3_USER" --regid="$T3_USER" --init-groups $reset \
+  exec setpriv --reuid="$T3_USER" --regid="$T3_USER" --init-groups \
     env HOME="$T3_HOME" USER="$T3_USER" LOGNAME="$T3_USER" SHELL=/bin/bash \
     PATH="$T3_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"
 }

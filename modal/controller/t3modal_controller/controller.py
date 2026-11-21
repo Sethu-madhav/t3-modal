@@ -27,19 +27,52 @@ class InvalidT3Version(ValueError):
     pass
 
 
+# A token is printable ASCII with no spaces. A token copied from a wrapped terminal line holds
+# spaces, and Anthropic refuses it.
+_TOKEN = re.compile(r"[!-~]+")
+
+# The keys each credential kind holds, and the form of each value (§11.3). A machine gets them as
+# environment variables.
+CREDENTIAL_KEYS = {"claude": {"CLAUDE_CODE_OAUTH_TOKEN": _TOKEN}}
+
+
+class UnknownCredentialKind(KeyError):
+    pass
+
+
+class InvalidCredential(ValueError):
+    """The message never repeats the values, since they are secrets."""
+
+
 def check_t3_version(t3_version: str) -> None:
     if not _T3_VERSION.fullmatch(t3_version):
         raise InvalidT3Version(f"t3Version {t3_version!r} is not a version number such as 0.1.10")
 
 
+def credential_keys(kind: str) -> dict[str, re.Pattern[str]]:
+    if kind not in CREDENTIAL_KEYS:
+        raise UnknownCredentialKind(kind)
+    return CREDENTIAL_KEYS[kind]
+
+
 class Cloud(Protocol):
     """The Modal calls the controller makes. ModalCloud in app.py is the real one."""
 
-    def create_sandbox(self, *, t3_version: str, args: dict[str, Any], env: dict[str, str]) -> str:
-        """env reaches the sandbox in an ephemeral Secret, never in the image or a command line."""
+    def create_sandbox(self, *, t3_version: str, args: dict[str, Any], env: dict[str, str], credentials: list[str]) -> str:
+        """env reaches the sandbox in an ephemeral Secret, never in the image or a command line.
+        credentials names the kinds whose Secrets the sandbox also gets."""
         ...
     def connect(self, sandbox_id: str, port: int) -> Endpoint: ...
     def terminate(self, sandbox_id: str) -> None: ...
+    def put_credential(self, kind: str, values: dict[str, str]) -> None:
+        """Creates or replaces the Secret t3modal-<kind> with exactly these values."""
+        ...
+    def credentials(self) -> dict[str, int]:
+        """The kind of each credential Secret, with the time in ms it was set."""
+        ...
+    def delete_credential(self, kind: str) -> bool:
+        """Deletes the Secret t3modal-<kind>. False if it didn't exist."""
+        ...
 
 
 def sandbox_name(machine_id: str) -> str:
@@ -117,7 +150,12 @@ class Controller:
         sandbox_id = None
         try:
             res = resources(m.size)
-            sandbox_id = self.cloud.create_sandbox(t3_version=m.t3_version, args=sandbox_args(m, res), env=self.sandbox_env(m.id))
+            sandbox_id = self.cloud.create_sandbox(
+                t3_version=m.t3_version,
+                args=sandbox_args(m, res),
+                env=self.sandbox_env(m.id),
+                credentials=sorted(self.cloud.credentials()),
+            )
             endpoints = {"t3": self.cloud.connect(sandbox_id, T3_PORT), "daemon": self.cloud.connect(sandbox_id, DAEMON_PORT)}
             self.store.put(started(m, sandbox_id=sandbox_id, endpoints=endpoints, resources=res, now_ms=self.clock_ms()))
             self.ops[op_id] = {**op, "status": "done"}
@@ -149,6 +187,25 @@ class Controller:
             return heartbeat(m, sandbox_id=sandbox_id, next_due_at=next_due_at, keep_awake_until=keep_awake_until, now_ms=now_ms)
 
         return self.store.update(machine_id, change) is not None
+
+    def put_credential(self, kind: str, values: Any) -> None:
+        """Raises UnknownCredentialKind, or InvalidCredential unless values holds exactly the kind's
+        keys, each a string in its key's form."""
+        keys = credential_keys(kind)
+        if not isinstance(values, dict) or set(values) != set(keys):
+            raise InvalidCredential(f"values must hold exactly {sorted(keys)}")
+        for key, form in keys.items():
+            if not isinstance(values[key], str) or not form.fullmatch(values[key]):
+                raise InvalidCredential(f"{key} must be printable ASCII with no spaces or line breaks")
+        self.cloud.put_credential(kind, values)
+
+    def delete_credential(self, kind: str) -> bool:
+        """Raises UnknownCredentialKind. False if the credential isn't set."""
+        credential_keys(kind)
+        return self.cloud.delete_credential(kind)
+
+    def credentials(self) -> list[dict[str, Any]]:
+        return [{"kind": kind, "setAt": set_at} for kind, set_at in sorted(self.cloud.credentials().items())]
 
     def op(self, op_id: str) -> dict[str, Any] | None:
         return self.ops.get(op_id)

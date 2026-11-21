@@ -18,7 +18,7 @@ if SUFFIX not in ("", "-it"):
     raise ValueError(f"T3MODAL_NAME_SUFFIX must be empty or -it, not {SUFFIX!r}")
 
 APP_NAME = f"t3modal-controller{SUFFIX}"
-REVISION = "3"  # CONTROLLER_REVISION: bump on every controller change, so setup redeploys (§6.1)
+REVISION = "4"  # CONTROLLER_REVISION: bump on every controller change, so setup redeploys (§6.1)
 CLAUDE_CODE_VERSION = "2.1.329"  # pinned per release (§7.1)
 STATE_ROOT = "/state"
 # The sandbox scripts sit next to this folder in the repo. Inside the controller's container, the
@@ -65,18 +65,49 @@ def machine_image(t3_version: str) -> modal.Image:
     )
 
 
-class ModalCloud:
-    """The real Cloud: Modal's Sandbox API."""
+def credential_secret_name(kind: str) -> str:
+    """The named Secret that holds one credential kind (§11.3)."""
+    return f"t3modal-{kind}{SUFFIX}"
 
-    def create_sandbox(self, *, t3_version: str, args: dict, env: dict[str, str]) -> str:
+
+class ModalCloud:
+    """The real Cloud: Modal's Sandbox and Secret APIs."""
+
+    def create_sandbox(self, *, t3_version: str, args: dict, env: dict[str, str], credentials: list[str]) -> str:
         sb = modal.Sandbox.create(
             "tini", "--", "/bin/sh", "/opt/t3modal/init.sh",
             app=modal.App.lookup(APP_NAME),
             image=machine_image(t3_version),
-            secrets=[modal.Secret.from_dict(env)],  # ephemeral, so the machine secret is never stored in Modal
+            # The env Secret is ephemeral, so the machine secret is never stored in Modal.
+            secrets=[modal.Secret.from_dict(env)] + [modal.Secret.from_name(credential_secret_name(k)) for k in credentials],
             **args,
         )
         return sb.object_id
+
+    def put_credential(self, kind: str, values: dict[str, str]) -> None:
+        # Delete then create, rather than update, so the Secret holds no stale key and its created_at
+        # is the time it was set. A machine created between the two calls starts without it.
+        name = credential_secret_name(kind)
+        modal.Secret.objects.delete(name, allow_missing=True)
+        modal.Secret.objects.create(name, values)
+
+    def credentials(self) -> dict[str, int]:
+        from t3modal_controller.controller import CREDENTIAL_KEYS
+
+        kinds = {credential_secret_name(k): k for k in CREDENTIAL_KEYS}
+        found = {}
+        for secret in modal.Secret.objects.list():
+            info = secret.info()
+            if info.name in kinds:
+                found[kinds[info.name]] = int(info.created_at.timestamp() * 1000)
+        return found
+
+    def delete_credential(self, kind: str) -> bool:
+        try:
+            modal.Secret.objects.delete(credential_secret_name(kind))
+        except modal.exception.NotFoundError:
+            return False
+        return True
 
     def connect(self, sandbox_id: str, port: int):
         from t3modal_controller.machines import Endpoint
