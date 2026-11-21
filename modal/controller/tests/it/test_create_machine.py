@@ -1,10 +1,11 @@
-"""Real-Modal test for #7: create a machine through the deployed controller and reach its T3.
+"""Real-Modal test for #7 and #8: create a machine through the deployed controller, reach its T3,
+and send a signed heartbeat with its machine secret.
 
 Opt-in: T3MODAL_IT=1 uv run pytest tests/it -s
 It deploys the controller as t3modal-controller-it, with its own Volume, Dict and admin Secret, and
 creates one small machine. The first run builds the machine image, which takes several minutes.
 Teardown stops the app, ends every sandbox in it, and checks that 0 are left.
-Connect tokens and the admin token are never printed.
+Connect tokens, the admin token, the HMAC key and the machine secret are never printed.
 """
 
 import json
@@ -27,12 +28,14 @@ APP_NAME = "t3modal-controller-it"
 T3_VERSION = os.environ.get("T3MODAL_IT_T3_VERSION", "0.1.10")
 
 
-def http(method: str, url: str, *, token: str | None = None, body: dict | None = None, timeout: float = 60):
+def http(
+    method: str, url: str, *, token: str | None = None, body: dict | bytes | None = None, headers: dict | None = None, timeout: float = 60
+):
     """Returns (status, parsed JSON or text)."""
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", **(headers or {})}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    data = None if body is None else json.dumps(body).encode()
+    data = body if body is None or isinstance(body, bytes) else json.dumps(body).encode()
     req = urllib.request.Request(url, method=method, headers=headers, data=data)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -56,6 +59,8 @@ def controller():
     admin = secrets.token_urlsafe(32)
     modal.Secret.objects.delete("t3modal-admin-it", allow_missing=True)
     modal.Secret.objects.create("t3modal-admin-it", {"ADMIN_TOKEN": admin})
+    modal.Secret.objects.delete("t3modal-hmac-it", allow_missing=True)
+    modal.Secret.objects.create("t3modal-hmac-it", {"HMAC_KEY": secrets.token_urlsafe(32)})
 
     log("deploying t3modal-controller-it")
     env = {**os.environ, "T3MODAL_NAME_SUFFIX": "-it"}
@@ -145,3 +150,42 @@ def test_a_machine_created_through_the_controller_serves_t3_through_its_connect_
     assert out.split()[0] == "t3"
     assert "--host 0.0.0.0 --port 3773" in out
     assert out.strip().endswith("root"), "sudo works only on the VM runtime (ADR 0004)"
+
+    # #8: the machine secret reaches the sandbox's environment, and signs a heartbeat.
+    secret = created["machineSecret"]
+    assert secret not in json.dumps(machine)
+    # init.sh is the process the daemon will start under in #9. On the VM runtime PID 1 is Modal's own init.
+    p = sb.exec("sh", "-c", "pid=$(pgrep -o -f /opt/t3modal/init.sh); ps -o comm= -p 1; tr '\\0' '\\n' </proc/$pid/environ | grep '^T3MODAL_'")
+    p.wait()
+    pid1, *lines = p.stdout.read().splitlines()
+    log(f"PID 1 is {pid1!r}, init.sh has {len(lines)} T3MODAL_ variables")
+    env = dict(line.split("=", 1) for line in lines)
+    in_env = env.get("T3MODAL_MACHINE_SECRET") == secret
+    log(f"machine secret in the sandbox env: {in_env}, controller URL matches: {env.get('T3MODAL_CONTROLLER_URL') == url}")
+    assert in_env
+    assert env["T3MODAL_MACHINE_ID"] == created["id"]
+    assert env["T3MODAL_CONTROLLER_URL"] == url
+
+    from t3modal_controller.signing import sign
+
+    def signed(method, path, body=b"", nonce=None):
+        nonce = nonce or secrets.token_hex(16)
+        ts = int(time.time())
+        headers = {
+            "X-T3modal-Machine": created["id"],
+            "X-T3modal-Timestamp": str(ts),
+            "X-T3modal-Nonce": nonce,
+            "X-T3modal-Signature": sign(secret, method=method, path=path, timestamp=ts, nonce=nonce, body=body),
+        }
+        return http(method, url + path, body=body or None, headers=headers)
+
+    hb_path = f"/machines/{created['id']}/heartbeat"
+    hb = json.dumps({"sandboxId": machine["sandboxId"], "nextDueAt": None, "keepAwakeUntil": 0}).encode()
+    nonce = secrets.token_hex(16)
+    first, again = signed("POST", hb_path, hb, nonce), signed("POST", hb_path, hb, nonce)
+    log(f"signed heartbeat: {first[0]}, same nonce again: {again[0]} {again[1]}")
+    assert first[0] == 200
+    assert again == (401, {"error": "unauthorized", "reason": "reused_nonce"})
+    assert http("GET", f"{url}/machines/{created['id']}", token=admin)[1]["lastHeartbeatAt"] > 0
+    assert signed("GET", f"/machines/{created['id']}")[0] == 403
+    assert signed("GET", f"/ops/{created['opId']}")[0] == 200

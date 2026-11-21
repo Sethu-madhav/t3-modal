@@ -3,6 +3,7 @@
 import json
 import os
 import threading
+import time
 from dataclasses import replace
 
 from t3modal_controller.machines import new_machine
@@ -111,3 +112,49 @@ def test_a_read_from_another_thread_waits_until_a_write_has_committed(tmp_path, 
     readers[0].join(timeout=5)
 
     assert seen_at_reload == [["m_1.json"]]
+
+
+def test_update_holds_the_lock_from_read_to_write(tmp_path):
+    store = StateStore(tmp_path, FakeVolume(tmp_path))
+    store.put(a_machine(last_heartbeat_at=0))
+
+    def slow_bump(m):
+        time.sleep(0.001)  # another thread that could read now would read the old count
+        return replace(m, last_heartbeat_at=m.last_heartbeat_at + 1)
+
+    def bump():
+        for _ in range(25):
+            store.update("m_1", slow_bump)
+
+    threads = [threading.Thread(target=bump) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert store.get("m_1").last_heartbeat_at == 100
+
+
+def test_update_of_an_unknown_machine_writes_nothing(tmp_path):
+    volume = FakeVolume(tmp_path)
+    store = StateStore(tmp_path, volume)
+
+    assert store.update("m_nope", lambda m: m) is None
+    assert "commit" not in volume.events
+
+
+def test_update_writes_nothing_if_the_change_raises(tmp_path):
+    volume = FakeVolume(tmp_path)
+    store = StateStore(tmp_path, volume)
+    store.put(a_machine())
+    commits = volume.events.count("commit")
+
+    def refuse(m):
+        raise ValueError("no")
+
+    try:
+        store.update("m_1", refuse)
+    except ValueError:
+        pass
+    assert volume.events.count("commit") == commits
+    assert store.get("m_1") == a_machine()

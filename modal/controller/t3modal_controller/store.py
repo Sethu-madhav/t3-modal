@@ -11,7 +11,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .machines import Machine
 
@@ -30,23 +30,41 @@ class StateStore:
 
     def get(self, machine_id: str) -> Machine | None:
         with _lock:
-            self._volume.reload()
-            path = self._dir / f"{machine_id}.json"
-            if not path.exists():
-                return None
-            return Machine.from_json(json.loads(path.read_text()))
+            return self._read(machine_id)
 
     def put(self, machine: Machine) -> None:
         with _lock:
-            self._dir.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=self._dir, prefix=f".{machine.id}.", suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(machine.to_json(), f)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp, self._dir / f"{machine.id}.json")
-            except BaseException:
-                Path(tmp).unlink(missing_ok=True)
-                raise
-            self._volume.commit()
+            self._write(machine)
+
+    def update(self, machine_id: str, change: Callable[[Machine], Machine]) -> Machine | None:
+        """Reads the machine, applies change and writes the result, all under the lock, so another
+        thread in this process can't write between the read and the write. Returns None and writes
+        nothing if the machine doesn't exist. If change raises, nothing is written."""
+        with _lock:
+            m = self._read(machine_id)
+            if m is None:
+                return None
+            m = change(m)
+            self._write(m)
+            return m
+
+    def _read(self, machine_id: str) -> Machine | None:
+        self._volume.reload()
+        path = self._dir / f"{machine_id}.json"
+        if not path.exists():
+            return None
+        return Machine.from_json(json.loads(path.read_text()))
+
+    def _write(self, machine: Machine) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self._dir, prefix=f".{machine.id}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(machine.to_json(), f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._dir / f"{machine.id}.json")
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+        self._volume.commit()

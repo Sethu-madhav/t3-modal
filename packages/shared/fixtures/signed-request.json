@@ -1,0 +1,40 @@
+{
+  "about": "Signed daemon requests (implementation.md §6.7). The controller's Python tests and the daemon's TypeScript tests both check these values, which came from openssl. The machine secret is hex HMAC-SHA256(hmacKey, machineId). The signature is hex HMAC-SHA256 keyed with the machine secret's hex text, over the lines of signedString joined by \\n. The last line is the hex SHA-256 of the raw body.",
+  "hmacKey": "test-hmac-key-not-a-real-one",
+  "machineId": "m_4f2a9c1e0b7d",
+  "machineSecret": "b3fb340d8e907cf8e3f170ae47ddae81133e3fe4de72f292a82333dfb7f25289",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/machines/m_4f2a9c1e0b7d/heartbeat",
+      "timestamp": 1763600000,
+      "nonce": "0123456789abcdef0123456789abcdef",
+      "body": "{\"sandboxId\":\"sb-1\",\"nextDueAt\":null,\"keepAwakeUntil\":0}",
+      "signedString": [
+        "v1",
+        "POST",
+        "/machines/m_4f2a9c1e0b7d/heartbeat",
+        "1763600000",
+        "0123456789abcdef0123456789abcdef",
+        "c116f29f6f5f10768d9a886f9ac82ddcc66cc96eafd9f6336d62e792cd81858b"
+      ],
+      "signature": "30c733e6085ebbe630353edc769982eb063bf506d95c9c6b830433625d3df20c"
+    },
+    {
+      "method": "GET",
+      "path": "/ops/op_1a2b3c4d5e6f?wait=1",
+      "timestamp": 1763600000,
+      "nonce": "0123456789abcdef0123456789abcdef",
+      "body": "",
+      "signedString": [
+        "v1",
+        "GET",
+        "/ops/op_1a2b3c4d5e6f?wait=1",
+        "1763600000",
+        "0123456789abcdef0123456789abcdef",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "signature": "c8013cd0974a2f942a6f548d5d6f127143b5aab1e69f541ce069ace2c336d6a6"
+    }
+  ]
+}
