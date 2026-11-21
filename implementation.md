@@ -295,7 +295,7 @@ This needs a T3 token with terminal write access. Phase 2 finds the scope name. 
   - The Secret `t3modal-admin`, holding `ADMIN_TOKEN`, 32 random bytes. The laptop keeps a copy in the Keychain.
   - The Secret `t3modal-hmac`, holding the key the controller derives machine secrets from (§6.7).
   - The Volume `t3modal-state`, version 2.
-- The HTTPS API is one FastAPI app served with `@modal.asgi_app()`, with `scaledown_window` around 300 seconds and `@modal.concurrent(max_inputs=20)`. `min_containers=0` keeps the idle cost at zero. Modal documents about 1 second to boot a container. The cold start with FastAPI and the Modal client loaded is still to measure (§18).
+- The HTTPS API is one FastAPI app served with `@modal.asgi_app()`, with `scaledown_window` around 300 seconds and `@modal.concurrent(max_inputs=20)`. `min_containers=0` keeps the idle cost at zero. The first request after a deploy, which meets a cold container with FastAPI and the Modal client loaded, took 2.6 s, 3.1 s and 5.5 s in 3 runs in #7. A warm request took 0.2 to 0.3 s (§18).
 - The timer is one of the 5 deployed crons Starter allows.
 
 ### 6.2 State
@@ -561,7 +561,7 @@ Power states: `unknown`, `starting`, `running`, `standby`, `stopping`, `stopped`
 4. If the T3 version or provisioning revision differs, call `/provision`.
 5. Tell the daemon about the activity that caused the wake, then send any messages the proxy held (§10.4).
 
-In Phase 0, T3 answered 0.9 to 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
+In Phase 0, T3 answered 0.9 to 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start, 3 to 5 s, and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
 
 ### 9.3 Sleep, decided on the machine
 
@@ -882,7 +882,7 @@ The total is about 7 to 9 weeks for one engineer. Phases 1 and 2 can run in para
 
 ## 18. Phase 0 answers and open questions
 
-Phase 0 answered 15 of the 21 questions. [docs/phase-0-findings.md](docs/phase-0-findings.md) has the measurements, and the sections above use them.
+Phase 0 answered 15 of the 21 questions, and Phase 1 answered Q11. [docs/phase-0-findings.md](docs/phase-0-findings.md) has the Phase 0 measurements, and the sections above use them.
 
 | # | Question | Answer |
 |---|---|---|
@@ -901,6 +901,7 @@ Phase 0 answered 15 of the 21 questions. [docs/phase-0-findings.md](docs/phase-0
 | 17 | Starter limits | $30 of credits a month, 100 containers, 5 deployed crons, 1 day of logs |
 | 18 | How long a connect token lasts, and tokens for two ports | Tokens for 3773 and 3774 work at once, each on its own URL. A second token for a port leaves the first valid. Every token still worked at 90 minutes. Longer is untested |
 | 19 | What an ended sandbox's connect URL answers | 404 "Sandbox not found" within 2 s |
+| 11 | The controller's cold start with FastAPI loaded | 2.6 s, 3.1 s and 5.5 s for the first request after a deploy in 3 runs, 0.2 to 0.3 s warm. Measured in #7. Fast enough that no container stays warm |
 
 Still open:
 
@@ -908,7 +909,6 @@ Still open:
 |---|---|---|---|
 | 2 | Read speed after a memory restore, and on a second read after a fresh boot | §4.4, Phase 2 | Warm the repo's files after a fresh boot |
 | 4 | What snapshot storage costs. Modal publishes no price | §13, Phase 3 | Fewer images, shown in costs |
-| 11 | The controller's cold start with FastAPI loaded | §9.2, Phase 1 | Keep one container warm during the day |
 | 15 | Every call T3 Code makes on connect, from a recorded session | §10.4, Phase 4 | Wake on any call the capture lacks |
 | 20 | Does Claude's sign-in show the "Paste code here" step when nothing answers on its localhost port? | §11.2, Phase 2 | An Anthropic API key as the fallback |
 | 21 | Does Docker's data survive a memory sleep and a disk sleep? | §7.1, Phase 2 | Document that images are rebuilt after a disk sleep |
