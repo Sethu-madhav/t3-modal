@@ -1,5 +1,5 @@
-"""Real-Modal test for #7 and #8: create a machine through the deployed controller, reach its T3,
-and send a signed heartbeat with its machine secret.
+"""Real-Modal test for #7, #8 and #9: create a machine through the deployed controller, reach its T3,
+send a signed heartbeat with its machine secret, and check the daemon, its heartbeats and Docker.
 
 Opt-in: T3MODAL_IT=1 uv run pytest tests/it -s
 It deploys the controller as t3modal-controller-it, with its own Volume, Dict and admin Secret, and
@@ -112,6 +112,7 @@ def test_a_machine_created_through_the_controller_serves_t3_through_its_connect_
     assert http("GET", f"{url}/version", token="wrong")[0] == 401
 
     t_create = time.monotonic()
+    t_create_wall = time.time()
     status, created = http("POST", f"{url}/machines", token=admin, body={"name": "it", "size": "small", "t3Version": T3_VERSION})
     assert status == 202, created
     op = {}
@@ -189,3 +190,76 @@ def test_a_machine_created_through_the_controller_serves_t3_through_its_connect_
     assert http("GET", f"{url}/machines/{created['id']}", token=admin)[1]["lastHeartbeatAt"] > 0
     assert signed("GET", f"/machines/{created['id']}")[0] == 403
     assert signed("GET", f"/ops/{created['opId']}")[0] == 200
+
+    # #9: the daemon answers through its connect URL, sends heartbeats, and comes back after a crash.
+    def run(script: str) -> str:
+        p = sb.exec("sh", "-c", script)
+        p.wait()
+        return p.stdout.read() + p.stderr.read()
+
+    def show_logs() -> None:
+        log("daemon.log and supervisor.log:\n" + run("tail -n 20 /var/log/t3modal/daemon.log /var/log/t3modal/supervisor.log"))
+
+    daemon = machine["endpoints"]["daemon"]
+    status_url = f"{daemon['url']}/status?" + urlencode({"_modal_connect_token": daemon["token"]})
+
+    def daemon_status(token=secret):
+        return http("GET", status_url, token=token, timeout=15)
+
+    t_d = time.monotonic()
+    while (got := daemon_status())[0] != 200 and time.monotonic() - t_d < 60:
+        time.sleep(2)
+    log(f"daemon /status: {got[0]} {got[1] if got[0] != 200 else ''}")
+    if got[0] != 200:
+        show_logs()
+    assert got[0] == 200
+    # The daemon started during this test, so startedAt falls between the create and now.
+    started_at = got[1]["startedAt"]
+    assert isinstance(started_at, int) and (t_create_wall - 60) * 1000 <= started_at <= time.time() * 1000
+    assert got == (200, {"machineId": created["id"], "sandboxId": machine["sandboxId"], "phase": "active", "startedAt": got[1]["startedAt"]})
+    assert daemon_status(token=None) == (401, {"error": "unauthorized"})
+    assert daemon_status(token="0" * 64) == (401, {"error": "unauthorized"})
+
+    # T3 starts with an empty environment, so it doesn't get the machine secret.
+    t3_env = run("tr '\\0' '\\n' </proc/$(cat /home/t3/.t3modal/t3.pid)/environ | grep -c '^T3MODAL_'").strip()
+    log(f"T3 has {t3_env} T3MODAL_ variables")
+    assert t3_env == "0"
+
+    out = run(
+        "su - t3 -c 'for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 1; done; "
+        "id -nG; docker run --rm hello-world'"
+    )
+    log(f"docker as t3: groups {out.splitlines()[0]!r}, hello-world: {'Hello from Docker!' in out}")
+    assert "Hello from Docker!" in out, out[-1500:]
+
+    # The daemon's own heartbeats. Its first one can arrive before the operation records the sandbox
+    # as running, and get 409 (§6.7), so this waits for two changes and times the gap between them.
+    def last_heartbeat():
+        return http("GET", f"{url}/machines/{created['id']}", token=admin)[1]["lastHeartbeatAt"]
+
+    seen = [last_heartbeat()]
+    t_hb = time.monotonic()
+    while len(seen) < 3 and time.monotonic() - t_hb < 150:
+        time.sleep(3)
+        if (h := last_heartbeat()) != seen[-1]:
+            seen.append(h)
+    gap = (seen[-1] - seen[-2]) / 1000 if len(seen) == 3 else None
+    log(f"daemon heartbeats: {len(seen) - 1} in {time.monotonic() - t_hb:.0f} s, gap {gap} s")
+    if len(seen) < 3:
+        show_logs()
+    assert gap is not None and 55 <= gap <= 65
+
+    # A crashed daemon comes back with a new PID, and the supervisor keeps running.
+    before = run("cat /home/t3/.t3modal/daemon.pid").strip()
+    run(f"kill -9 {before}")
+    t_r = time.monotonic()
+    after = before
+    while time.monotonic() - t_r < 30:
+        after = run("cat /home/t3/.t3modal/daemon.pid 2>/dev/null").strip()
+        if after and after != before and daemon_status()[0] == 200:
+            break
+        time.sleep(1)
+    log(f"daemon killed, back with a new PID after {time.monotonic() - t_r:.1f} s: {after != before}")
+    assert after and after != before
+    assert daemon_status()[0] == 200
+    assert run("pgrep -c -f /opt/t3modal/init.sh").strip() != "0"

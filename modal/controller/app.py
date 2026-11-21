@@ -18,7 +18,7 @@ if SUFFIX not in ("", "-it"):
     raise ValueError(f"T3MODAL_NAME_SUFFIX must be empty or -it, not {SUFFIX!r}")
 
 APP_NAME = f"t3modal-controller{SUFFIX}"
-REVISION = "2"  # CONTROLLER_REVISION: bump on every controller change, so setup redeploys (§6.1)
+REVISION = "3"  # CONTROLLER_REVISION: bump on every controller change, so setup redeploys (§6.1)
 CLAUDE_CODE_VERSION = "2.1.329"  # pinned per release (§7.1)
 STATE_ROOT = "/state"
 # The sandbox scripts sit next to this folder in the repo. Inside the controller's container, the
@@ -56,6 +56,7 @@ def machine_image(t3_version: str) -> modal.Image:
         .run_commands(
             "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
             "useradd -m -s /bin/bash t3 && echo 't3 ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/t3",
+            "usermod -aG docker t3",  # docker without sudo; docker.io created the group above
             f"su - t3 -c 'curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION={t3_version} sh'",
             f"npm i -g @anthropic-ai/claude-code@{CLAUDE_CODE_VERSION}",
             "git config --system user.name t3modal && git config --system user.email t3modal@localhost",

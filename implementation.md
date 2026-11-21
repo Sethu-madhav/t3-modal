@@ -426,6 +426,7 @@ base = (modal.Image.debian_slim(python_version="3.12")
   .run_commands(
      "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",  # node:sqlite needs 22.5 or later
      "useradd -m -s /bin/bash t3 && echo 't3 ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/t3",
+     "usermod -aG docker t3",                     # docker without sudo
      f"su - t3 -c 'curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION={t3_version} sh'",
      f"npm i -g @anthropic-ai/claude-code@{claude_version}",
      "git config --system user.name t3modal && git config --system user.email t3modal@localhost")
@@ -448,7 +449,9 @@ base = (modal.Image.debian_slim(python_version="3.12")
 4. It runs three supervised loops. The first two run as the user `t3`:
    - `t3 serve --host 0.0.0.0 --port 3773`. Both flags are required. Without `--port`, T3 picks the first free port from 3773, and without `--host` it doesn't listen on the container's interface. The loop doesn't restart T3 while `~/.t3modal/t3.hold` exists, which lets the daemon stop T3 for a disk sleep.
    - `node ~/.t3modal/daemon.mjs`, or `/opt/t3modal/daemon.mjs` before the first provisioning. It restarts on exit, so an upgraded daemon replaces itself without restarting T3.
-   - `dockerd`, as root, in the background. T3 doesn't wait for it.
+   - `dockerd`, as root, in the background. T3 doesn't wait for it. The user `t3` is in the `docker` group.
+
+   Each loop records its process's PID in `~/.t3modal/<name>.pid`. The daemon inherits the supervisor's environment, which holds `T3MODAL_MACHINE_ID`, `T3MODAL_MACHINE_SECRET`, `T3MODAL_CONTROLLER_URL` and Modal's `MODAL_SANDBOX_ID`. T3 starts with `setpriv --reset-env`, so its agents don't get the machine secret by accident. They run as `t3` with `sudo`, so this isn't a security boundary. The supervisor never puts a secret in a command's arguments.
 
 `init.sh` never exits, because the sandbox ends without a snapshot when its first process exits. A crashing loop retries with backoff. The 24-hour timeout bounds the cost.
 
@@ -471,7 +474,15 @@ Operations, all requiring the machine secret:
 
 There is no endpoint that runs arbitrary commands in release builds. Development builds add `POST /exec` behind a build flag.
 
-After 20 failed authentication attempts in a minute, the daemon refuses all requests for 5 minutes and logs the event.
+Every request carries the machine secret as `Authorization: Bearer <secret>`, next to Modal's connect token in the query string (ADR 0003). T3 doesn't listen on 3774, so the header is free. The daemon compares SHA-256 digests of the header and the expected value with `timingSafeEqual`, so the time doesn't depend on the input. A missing or wrong secret gets 401 `{"error":"unauthorized"}`, and an unknown route gets 404 only after the secret checks out.
+
+After 20 failed authentication attempts in a minute, the daemon refuses all requests for 5 minutes, even ones with the right secret, and logs the event. It answers 429 `{"error":"locked_out"}` with `Retry-After` in seconds, so the laptop can tell a lockout from a wrong secret.
+
+`GET /status` returns `{machineId, sandboxId, phase, startedAt}` today. The idle logic adds its fields later.
+
+The daemon sends a signed heartbeat (§6.7) at start and every 60 s after. It names its sandbox with `MODAL_SANDBOX_ID`. A heartbeat that fails or gets 409 is logged, and the next one tries again. A memory restore starts a new sandbox but keeps the daemon's old environment, so the memory sleep work must give the daemon its new sandbox id.
+
+`apps/daemon` is TypeScript. `bun run build:daemon` bundles it into `modal/sandbox/daemon.mjs`, which is committed, and `bun run test` fails if the bundle is stale. The machine image copies it to `/opt/t3modal`.
 
 ### 7.4 `provision.sh`
 

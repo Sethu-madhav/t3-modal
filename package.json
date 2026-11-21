@@ -7,10 +7,12 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "bun run typecheck && bun run test:bun && bun run test:daemon && bun run test:controller && bun run check:lock",
+    "test": "bun run typecheck && bun run test:bun && bun run test:daemon && bun run test:controller && bun run check:lock && bun run check:daemon",
     "typecheck": "tsc -p packages/shared && tsc -p packages/shared/test && tsc -p apps/daemon && tsc -p apps/service",
     "test:bun": "bun test apps/service packages/shared",
     "test:daemon": "apps/daemon/scripts/test.sh",
+    "build:daemon": "bun build apps/daemon/src/main.ts --target=node --format=esm --outfile modal/sandbox/daemon.mjs",
+    "check:daemon": "out=$(mktemp -d) && bun build apps/daemon/src/main.ts --target=node --format=esm --outfile \"$out/daemon.mjs\" >/dev/null && cmp -s \"$out/daemon.mjs\" modal/sandbox/daemon.mjs; ok=$?; rm -rf \"$out\"; [ $ok = 0 ] || { echo 'modal/sandbox/daemon.mjs is stale. Run: bun run build:daemon' >&2; exit 1; }",
     "test:controller": "uv run --directory modal/controller --locked pytest",
     "lock:controller": "cd modal/controller && uv lock && uv export --locked --no-dev --no-emit-project --no-header --format requirements-txt --output-file requirements.lock",
     "check:lock": "cd modal/controller && out=$(uv export --locked --no-dev --no-emit-project --no-header --format requirements-txt && printf x) && [ \"$out\" = \"$(cat requirements.lock && printf x)\" ] || { echo 'requirements.lock does not match uv.lock, or uv export failed. Run: bun run lock:controller' >&2; exit 1; }",
