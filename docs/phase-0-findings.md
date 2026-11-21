@@ -25,6 +25,7 @@ Results of the Phase 0 experiments, measured on the user's Modal Starter workspa
 | 18 | Do connect tokens work on the VM runtime, for two ports, and for how long? | Yes, with no declared ports. Tokens for 3773 and 3774 work at once. A second token for a port leaves the first valid. Every token still worked at 90 minutes | One token per port. The controller refreshes tokens after a 401 |
 | 19 | What does an ended sandbox's connect URL answer? | 404 "Sandbox not found" within 2 s | The proxy can tell an ended sandbox from a network error |
 | 14 | Does T3's Antigravity Google sign-in work on a machine? | No. Four separate blockers on a Linux machine with no screen. Three were worked around, and the fourth was still open when the user stopped the test | Antigravity leaves v1 |
+| 11 | How long is the controller's cold start? | 2.6 s, 3.1 s and 5.5 s for the first request after a deploy in 3 runs, 0.2 to 0.3 s warm. Measured in Phase 1, in #7 | No container stays warm |
 
 Modal's per-tag stats put experiments 3 to 6 at $0.15. Experiments 1 and 2 ran before the stats window and cost about $0.06 by the rates, so all six cost about $0.21. The stats put experiment 7 at $0.035, so experiments 1 to 7 cost about $0.25. Experiment 8 ran about 90 minutes at the 0.25-core request, for about $0.10.
 
@@ -195,7 +196,6 @@ The no-answer at 30 minutes came right after the WebSocket that used the same to
 | # | Question | Why it waits |
 |---|---|---|
 | 4 | What snapshot storage costs | Modal publishes no price. Check the workspace's usage page after today's images expire |
-| 11 | The controller's cold start | Measured when Phase 1 deploys the controller |
 | 2 | Read speed after a memory restore, and on a second read after a fresh boot | Next small experiment |
 | 15 | Every call T3 Code makes on connect | Recorded in Phase 4 |
 | 20 | Whether Claude's sign-in shows the paste-code step with nothing on its localhost port | Phase 2 |

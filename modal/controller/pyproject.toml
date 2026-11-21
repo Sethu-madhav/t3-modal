@@ -3,10 +3,16 @@ name = "t3modal-controller"
 version = "0.0.0"
 description = "The t3modal controller, deployed to the user's Modal workspace."
 requires-python = ">=3.12,<3.16"
-dependencies = ["modal==1.6.4"]
+dependencies = [
+    "fastapi==0.165.0",
+    "modal==1.6.4",
+]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "httpx2>=2.16.2",
+    "pytest>=8",
+]
 
 [tool.uv]
 package = false
