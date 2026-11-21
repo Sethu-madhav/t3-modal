@@ -2,7 +2,16 @@
 
 import pytest
 
-from t3modal_controller.machines import Endpoint, IllegalTransition, Machine, new_machine, start_failed, started
+from t3modal_controller.machines import (
+    Endpoint,
+    IllegalTransition,
+    Machine,
+    StaleSandbox,
+    heartbeat,
+    new_machine,
+    start_failed,
+    started,
+)
 from t3modal_controller.sizes import resources
 
 ENDPOINTS = {
@@ -50,12 +59,45 @@ def test_a_running_machine_cannot_be_started_again():
         started(m, sandbox_id="sb-2", endpoints=ENDPOINTS, resources=resources("default"), now_ms=6_000)
 
 
+def a_running_machine() -> Machine:
+    return started(a_new_machine(), sandbox_id="sb-1", endpoints=ENDPOINTS, resources=resources("default"), now_ms=5_000)
+
+
+def test_a_heartbeat_from_the_current_sandbox_records_its_time_and_schedule():
+    m = heartbeat(a_running_machine(), sandbox_id="sb-1", next_due_at=90_000, keep_awake_until=60_000, now_ms=8_000)
+
+    assert m.power == "running"
+    assert m.last_heartbeat_at == 8_000
+    assert m.next_due_at == 90_000
+    assert m.keep_awake_until == 60_000
+
+
+def test_a_heartbeat_can_clear_the_schedule():
+    m = heartbeat(a_running_machine(), sandbox_id="sb-1", next_due_at=90_000, keep_awake_until=60_000, now_ms=8_000)
+
+    m = heartbeat(m, sandbox_id="sb-1", next_due_at=None, keep_awake_until=0, now_ms=9_000)
+
+    assert m.next_due_at is None
+    assert m.keep_awake_until == 0
+
+
+@pytest.mark.parametrize(
+    ("machine", "sandbox_id"),
+    [(a_running_machine(), "sb-old"), (a_new_machine(), "sb-1"), (start_failed(a_new_machine(), error="x", now_ms=1), "sb-1")],
+    ids=["an older sandbox", "a starting machine", "a stopped machine"],
+)
+def test_a_heartbeat_from_a_sandbox_that_is_not_current_is_refused(machine, sandbox_id):
+    with pytest.raises(StaleSandbox):
+        heartbeat(machine, sandbox_id=sandbox_id, next_due_at=None, keep_awake_until=0, now_ms=8_000)
+
+
 def test_the_state_file_round_trips_through_json_with_the_plans_field_names():
-    m = started(a_new_machine(), sandbox_id="sb-1", endpoints=ENDPOINTS, resources=resources("default"), now_ms=5_000)
+    m = heartbeat(a_running_machine(), sandbox_id="sb-1", next_due_at=90_000, keep_awake_until=60_000, now_ms=8_000)
 
     doc = m.to_json()
 
     assert doc["id"] == "m_1"
     assert doc["sandboxId"] == "sb-1"
     assert doc["endpoints"]["t3"] == {"url": "https://t3.example", "token": "tok-t3"}
+    assert (doc["lastHeartbeatAt"], doc["nextDueAt"], doc["keepAwakeUntil"]) == (8_000, 90_000, 60_000)
     assert Machine.from_json(doc) == m

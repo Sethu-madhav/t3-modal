@@ -6,7 +6,8 @@ import traceback
 from collections.abc import Callable, MutableMapping
 from typing import Any, Protocol
 
-from .machines import Endpoint, Machine, new_machine, start_failed, started
+from .machines import Endpoint, Machine, heartbeat, new_machine, start_failed, started
+from .signing import machine_secret
 from .sizes import Resources, resources
 from .store import StateStore
 
@@ -34,7 +35,9 @@ def check_t3_version(t3_version: str) -> None:
 class Cloud(Protocol):
     """The Modal calls the controller makes. ModalCloud in app.py is the real one."""
 
-    def create_sandbox(self, *, t3_version: str, args: dict[str, Any]) -> str: ...
+    def create_sandbox(self, *, t3_version: str, args: dict[str, Any], env: dict[str, str]) -> str:
+        """env reaches the sandbox in an ephemeral Secret, never in the image or a command line."""
+        ...
     def connect(self, sandbox_id: str, port: int) -> Endpoint: ...
     def terminate(self, sandbox_id: str) -> None: ...
 
@@ -64,13 +67,27 @@ class Controller:
         ops: MutableMapping[str, dict[str, Any]],
         cloud: Cloud,
         clock_ms: Callable[[], int],
+        hmac_key: str,
+        controller_url: str,
         new_id: Callable[[str], str] = lambda prefix: f"{prefix}_{secrets.token_hex(6)}",
     ):
         self.store = store
         self.ops = ops
         self.cloud = cloud
         self.clock_ms = clock_ms
+        self.hmac_key = hmac_key
+        self.controller_url = controller_url
         self.new_id = new_id
+
+    def machine_secret(self, machine_id: str) -> str:
+        return machine_secret(self.hmac_key, machine_id)
+
+    def sandbox_env(self, machine_id: str) -> dict[str, str]:
+        return {
+            "T3MODAL_MACHINE_ID": machine_id,
+            "T3MODAL_MACHINE_SECRET": self.machine_secret(machine_id),
+            "T3MODAL_CONTROLLER_URL": self.controller_url,
+        }
 
     def begin_create(self, *, name: str, size: str, t3_version: str) -> tuple[str, str]:
         """Records a new machine and an operation to start it. Raises UnknownSize or InvalidT3Version before writing anything."""
@@ -100,7 +117,7 @@ class Controller:
         sandbox_id = None
         try:
             res = resources(m.size)
-            sandbox_id = self.cloud.create_sandbox(t3_version=m.t3_version, args=sandbox_args(m, res))
+            sandbox_id = self.cloud.create_sandbox(t3_version=m.t3_version, args=sandbox_args(m, res), env=self.sandbox_env(m.id))
             endpoints = {"t3": self.cloud.connect(sandbox_id, T3_PORT), "daemon": self.cloud.connect(sandbox_id, DAEMON_PORT)}
             self.store.put(started(m, sandbox_id=sandbox_id, endpoints=endpoints, resources=res, now_ms=self.clock_ms()))
             self.ops[op_id] = {**op, "status": "done"}
@@ -123,6 +140,15 @@ class Controller:
         except Exception:
             traceback.print_exc()
         self.ops[op_id] = {**op, "status": "failed", "error": error}
+
+    def heartbeat(self, machine_id: str, *, sandbox_id: str, next_due_at: int | None, keep_awake_until: int) -> bool:
+        """Records a daemon's heartbeat. False if the machine doesn't exist. Raises StaleSandbox."""
+        now_ms = self.clock_ms()
+
+        def change(m: Machine) -> Machine:
+            return heartbeat(m, sandbox_id=sandbox_id, next_due_at=next_due_at, keep_awake_until=keep_awake_until, now_ms=now_ms)
+
+        return self.store.update(machine_id, change) is not None
 
     def op(self, op_id: str) -> dict[str, Any] | None:
         return self.ops.get(op_id)

@@ -295,7 +295,8 @@ This needs a T3 token with terminal write access. Phase 2 finds the scope name. 
   - The Secret `t3modal-admin`, holding `ADMIN_TOKEN`, 32 random bytes. The laptop keeps a copy in the Keychain.
   - The Secret `t3modal-hmac`, holding the key the controller derives machine secrets from (§6.7).
   - The Volume `t3modal-state`, version 2.
-- The HTTPS API is one FastAPI app served with `@modal.asgi_app()`, with `scaledown_window` around 300 seconds and `@modal.concurrent(max_inputs=20)`. `min_containers=0` keeps the idle cost at zero. The first request after a deploy, which meets a cold container with FastAPI and the Modal client loaded, took 2.6 s, 3.1 s and 5.5 s in 3 runs in #7. A warm request took 0.2 to 0.3 s (§18).
+  - The Dicts `t3modal-ops`, for long operations, and `t3modal-nonces`, for signed requests (§6.7). The controller creates both on first use.
+- The HTTPS API is one FastAPI app served with `@modal.asgi_app()`, with `scaledown_window` around 300 seconds and `@modal.concurrent(max_inputs=20)`. `min_containers=0` keeps the idle cost at zero. The first request after a deploy, which meets a cold container with FastAPI and the Modal client loaded, took 2.6 s to 6.7 s in 4 of 5 runs in #7 and #8, and 17.9 s in the fifth. A warm request took 0.2 to 0.3 s (§18).
 - The timer is one of the 5 deployed crons Starter allows.
 
 ### 6.2 State
@@ -315,6 +316,7 @@ One file per machine, `/state/machines/<machineId>.json`:
   "endpoints": {"t3": {"url": "https://…", "token": "…"}, "daemon": {"url": "https://…", "token": "…"}}, // connect URLs and tokens, made at each wake (ADR 0003)
   "lastSleep": {"sequence": 4812, "acked": true},
   "nextDueAt": null,               // ms since epoch: next automation, held webhook or limit reset
+  "lastHeartbeatAt": 0, "keepAwakeUntil": 0, // ms since epoch, from the daemon's last heartbeat
   "credentialMode": {"github": "all", "claude": "all"},
   "wakeLog": [0, 0],               // recent wake times, for rate limits
   "runs": [{"sandboxId": "sb-…", "start": 0, "end": 0, "cpuLimit": 4, "memLimitGiB": 8}],
@@ -341,7 +343,7 @@ Authentication:
 | Method and path | Caller | What it does |
 |---|---|---|
 | `GET /version` | laptop | Controller revision and Modal SDK version |
-| `POST /machines` `{name, size, t3Version}` | laptop | Registers the machine, builds or reuses the base image (§7.1), and wakes it. Returns `{id, machineSecret}` once |
+| `POST /machines` `{name, size, t3Version}` | laptop | Registers the machine, builds or reuses the base image (§7.1), and wakes it. Returns `{id, opId, machineSecret}`. No other answer carries the secret |
 | `POST /machines/{id}/wake` `{force}` | laptop, timer | If running, returns the connect URLs and tokens. Otherwise checks the budget (§6.5) and starts a sandbox (§9.2) |
 | `POST /machines/{id}/checkpoint` | laptop, timer | Disk snapshot without ending the sandbox (§9.7) |
 | `POST /machines/{id}/sleep` `{sandboxId, sequence, mode, wakeAfter}` | daemon | Snapshots and ends the sandbox (§9.3) |
@@ -399,9 +401,15 @@ Each machine has a secret: an HMAC of its id under the controller's `t3modal-hma
 
 The machine secret is used in two places:
 - The daemon's API requires `Authorization: Bearer <secret>`, compared in constant time.
-- Requests from the daemon to the controller are signed as `HMAC(secret, method, path, timestamp, nonce, body)`. The controller rejects timestamps more than 60 seconds off and nonces seen in the last 2 minutes.
+- Requests from the daemon to the controller are signed as `HMAC(secret, method, path, timestamp, nonce, body)`. The controller rejects timestamps more than 60 seconds off and any nonce the machine has used before.
 
-A machine secret allows actions on that machine only: sleep, heartbeat and reading its own operations. It can't wake machines, read credentials, change the budget or delete anything.
+The secret is the hex HMAC-SHA256 of the machine id. The controller derives it whenever it needs it and never stores it. A signed request carries the headers `X-T3modal-Machine`, `X-T3modal-Timestamp` in unix seconds, `X-T3modal-Nonce` of 16 to 64 hex characters, and `X-T3modal-Signature`. The signature is the hex HMAC-SHA256 of these lines joined by newlines: `v1`, the method, the path with its query string, the timestamp, the nonce, and the hex SHA-256 of the body. `packages/shared/fixtures/signed-request.json` holds a test vector that the controller and the daemon both check. The controller records each nonce in the Dict `t3modal-nonces` with `put(skip_if_exists=True)`, so two containers can't both accept one nonce. A refusal answers 401 with a `reason`: `malformed`, `clock_skew`, `bad_signature` or `reused_nonce`.
+
+The sandbox gets `T3MODAL_MACHINE_ID`, `T3MODAL_MACHINE_SECRET` and `T3MODAL_CONTROLLER_URL` in its environment. `init.sh` starts T3 with `setpriv --reset-env`, so T3 doesn't inherit them.
+
+A machine secret allows actions on that machine only: sleep, heartbeat and reading its own operations. It can't wake machines, read credentials, change the budget or delete anything. The controller lists the routes a machine secret may call and answers 403 on every other route, so a new route stays closed to machines unless it is added to that list.
+
+A heartbeat answers 409 `stale_sandbox` unless the machine is running in the sandbox the heartbeat names. The daemon can start before the create operation records the sandbox as running, so its first heartbeat may get 409. The daemon treats 409 as "try again at the next heartbeat" and doesn't shut down. The api updates a state file under a lock, so two requests in one container can't overwrite each other. Writes from different containers, such as a heartbeat and a sleep operation, wait for the per-machine lease (§6.4).
 
 ---
 
@@ -561,7 +569,7 @@ Power states: `unknown`, `starting`, `running`, `standby`, `stopping`, `stopped`
 4. If the T3 version or provisioning revision differs, call `/provision`.
 5. Tell the daemon about the activity that caused the wake, then send any messages the proxy held (§10.4).
 
-In Phase 0, T3 answered 0.9 to 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start, 3 to 5 s, and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
+In Phase 0, T3 answered 0.9 to 1.7 s after a memory restore. A fresh boot on the VM runtime took 4.2 to 11.0 s, 5.1 s typical. The controller's cold start, usually 3 to 7 s, and the provisioning check come on top. The proxy holds T3 Code's message meanwhile, so the user doesn't resend it.
 
 ### 9.3 Sleep, decided on the machine
 
@@ -901,7 +909,7 @@ Phase 0 answered 15 of the 21 questions, and Phase 1 answered Q11. [docs/phase-0
 | 17 | Starter limits | $30 of credits a month, 100 containers, 5 deployed crons, 1 day of logs |
 | 18 | How long a connect token lasts, and tokens for two ports | Tokens for 3773 and 3774 work at once, each on its own URL. A second token for a port leaves the first valid. Every token still worked at 90 minutes. Longer is untested |
 | 19 | What an ended sandbox's connect URL answers | 404 "Sandbox not found" within 2 s |
-| 11 | The controller's cold start with FastAPI loaded | 2.6 s, 3.1 s and 5.5 s for the first request after a deploy in 3 runs, 0.2 to 0.3 s warm. Measured in #7. Fast enough that no container stays warm |
+| 11 | The controller's cold start with FastAPI loaded | 2.6 s, 3.1 s, 5.5 s, 6.7 s and 17.9 s for the first request after a deploy in 5 runs, 0.2 to 0.3 s warm. Measured in #7 and #8. Fast enough that no container stays warm. Watch the slow outlier |
 
 Still open:
 

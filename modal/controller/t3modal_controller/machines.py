@@ -12,6 +12,10 @@ class IllegalTransition(Exception):
     pass
 
 
+class StaleSandbox(Exception):
+    """A daemon spoke for a sandbox that isn't the machine's current one."""
+
+
 @dataclass(frozen=True)
 class Endpoint:
     """A connect URL and its token for one port (ADR 0003)."""
@@ -34,6 +38,9 @@ class Machine:
     endpoints: dict[str, Endpoint] | None = None  # "t3" and "daemon"
     runs: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    last_heartbeat_at: int = 0
+    next_due_at: int | None = None  # ms since epoch, from the daemon (§6.4)
+    keep_awake_until: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -51,6 +58,9 @@ class Machine:
             else {k: {"url": e.url, "token": e.token} for k, e in self.endpoints.items()},
             "runs": [dict(r) for r in self.runs],
             "error": self.error,
+            "lastHeartbeatAt": self.last_heartbeat_at,
+            "nextDueAt": self.next_due_at,
+            "keepAwakeUntil": self.keep_awake_until,
         }
 
     @classmethod
@@ -69,6 +79,9 @@ class Machine:
             endpoints=None if endpoints is None else {k: Endpoint(**e) for k, e in endpoints.items()},
             runs=[dict(r) for r in doc.get("runs", [])],
             error=doc.get("error"),
+            last_heartbeat_at=doc.get("lastHeartbeatAt", 0),
+            next_due_at=doc.get("nextDueAt"),
+            keep_awake_until=doc.get("keepAwakeUntil", 0),
         )
 
 
@@ -95,3 +108,9 @@ def start_failed(m: Machine, *, error: str, now_ms: int) -> Machine:
     if m.power != "starting":
         raise IllegalTransition(f"machine {m.id} is {m.power}, not starting")
     return replace(m, power="stopped", sandbox_id=None, endpoints=None, stopped_at=now_ms, error=error)
+
+
+def heartbeat(m: Machine, *, sandbox_id: str, next_due_at: int | None, keep_awake_until: int, now_ms: int) -> Machine:
+    if m.power != "running" or m.sandbox_id != sandbox_id:
+        raise StaleSandbox(f"sandbox {sandbox_id} is not machine {m.id}'s current sandbox")
+    return replace(m, last_heartbeat_at=now_ms, next_due_at=next_due_at, keep_awake_until=keep_awake_until)

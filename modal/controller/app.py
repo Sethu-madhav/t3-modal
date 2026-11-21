@@ -18,7 +18,7 @@ if SUFFIX not in ("", "-it"):
     raise ValueError(f"T3MODAL_NAME_SUFFIX must be empty or -it, not {SUFFIX!r}")
 
 APP_NAME = f"t3modal-controller{SUFFIX}"
-REVISION = "1"  # CONTROLLER_REVISION: bump on every controller change, so setup redeploys (§6.1)
+REVISION = "2"  # CONTROLLER_REVISION: bump on every controller change, so setup redeploys (§6.1)
 CLAUDE_CODE_VERSION = "2.1.329"  # pinned per release (§7.1)
 STATE_ROOT = "/state"
 # The sandbox scripts sit next to this folder in the repo. Inside the controller's container, the
@@ -37,7 +37,9 @@ controller_image = (
 
 state_volume = modal.Volume.from_name(f"t3modal-state{SUFFIX}", create_if_missing=True, version=2)
 ops_dict = modal.Dict.from_name(f"t3modal-ops{SUFFIX}", create_if_missing=True)
+nonces_dict = modal.Dict.from_name(f"t3modal-nonces{SUFFIX}", create_if_missing=True)
 admin_secret = modal.Secret.from_name(f"t3modal-admin{SUFFIX}", required_keys=["ADMIN_TOKEN"])
+hmac_secret = modal.Secret.from_name(f"t3modal-hmac{SUFFIX}", required_keys=["HMAC_KEY"])  # machine secrets (§6.7)
 
 
 def machine_image(t3_version: str) -> modal.Image:
@@ -65,11 +67,12 @@ def machine_image(t3_version: str) -> modal.Image:
 class ModalCloud:
     """The real Cloud: Modal's Sandbox API."""
 
-    def create_sandbox(self, *, t3_version: str, args: dict) -> str:
+    def create_sandbox(self, *, t3_version: str, args: dict, env: dict[str, str]) -> str:
         sb = modal.Sandbox.create(
             "tini", "--", "/bin/sh", "/opt/t3modal/init.sh",
             app=modal.App.lookup(APP_NAME),
             image=machine_image(t3_version),
+            secrets=[modal.Secret.from_dict(env)],  # ephemeral, so the machine secret is never stored in Modal
             **args,
         )
         return sb.object_id
@@ -94,18 +97,25 @@ def store():
     return StateStore(Path(STATE_ROOT), state_volume)
 
 
-@app.function(image=controller_image, volumes={STATE_ROOT: state_volume}, timeout=15 * 60)
+@app.function(image=controller_image, volumes={STATE_ROOT: state_volume}, secrets=[hmac_secret], timeout=15 * 60)
 def run_op(op_id: str) -> None:
     """Runs one long operation, past the web request timeout (§6.3)."""
     from t3modal_controller.controller import Controller
 
-    Controller(store=store(), ops=ops_dict, cloud=ModalCloud(), clock_ms=now_ms).perform(op_id)
+    Controller(
+        store=store(),
+        ops=ops_dict,
+        cloud=ModalCloud(),
+        clock_ms=now_ms,
+        hmac_key=os.environ["HMAC_KEY"],
+        controller_url=api.get_web_url().rstrip("/"),
+    ).perform(op_id)
 
 
 @app.function(
     image=controller_image,
     volumes={STATE_ROOT: state_volume},
-    secrets=[admin_secret],
+    secrets=[admin_secret, hmac_secret],
     scaledown_window=300,
     min_containers=0,
 )
@@ -116,8 +126,11 @@ def api():
 
     return create_api(
         admin_token=os.environ["ADMIN_TOKEN"],
+        hmac_key=os.environ["HMAC_KEY"],
+        controller_url=api.get_web_url().rstrip("/"),
         store=store(),
         ops=ops_dict,
+        nonces=nonces_dict,
         cloud=ModalCloud(),
         run_op=lambda op_id: run_op.spawn(op_id),
         revision=REVISION,
