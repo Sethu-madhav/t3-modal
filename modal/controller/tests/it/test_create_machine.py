@@ -1,16 +1,20 @@
-"""Real-Modal test for #7, #8 and #9: create a machine through the deployed controller, reach its T3,
-send a signed heartbeat with its machine secret, and check the daemon, its heartbeats and Docker.
+"""Real-Modal test for #7, #8, #9 and #16: set the Claude token, create a machine through the deployed
+controller, reach its T3, send a signed heartbeat with its machine secret, check the daemon, its
+heartbeats and Docker, and run Claude Code with the token.
 
-Opt-in: T3MODAL_IT=1 uv run pytest tests/it -s
-It deploys the controller as t3modal-controller-it, with its own Volume, Dict and admin Secret, and
+Opt-in: T3MODAL_IT=1 T3MODAL_IT_CLAUDE_TOKEN_FILE=<file> uv run pytest tests/it -s
+The file holds a Claude Code OAuth token, from claude setup-token.
+It deploys the controller as t3modal-controller-it, with its own Volume, Dict and Secrets, and
 creates one small machine. The first run builds the machine image, which takes several minutes.
-Teardown stops the app, ends every sandbox in it, and checks that 0 are left.
-Connect tokens, the admin token, the HMAC key and the machine secret are never printed.
+Teardown stops the app, ends every sandbox in it, checks that 0 are left, and deletes the Claude Secret.
+Connect tokens, the admin token, the HMAC key, the machine secret and the Claude token are never printed.
 """
 
+import hashlib
 import json
 import os
 import secrets
+import shlex
 import subprocess
 import sys
 import time
@@ -48,6 +52,18 @@ def http(
         return status, text
 
 
+T3_TOKEN = "$(tr '\\0' '\\n' </proc/$(cat /home/t3/.t3modal/t3.pid)/environ | sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p')"
+
+
+def claude_as_t3(command: str) -> str:
+    """A script that runs command as t3 with the environment init.sh gives T3."""
+    inner = f'export CLAUDE_CODE_OAUTH_TOKEN="{T3_TOKEN}"; exec {command} </dev/null'
+    return (
+        "cd /home/t3 && timeout 180 setpriv --reuid=t3 --regid=t3 --init-groups env -i HOME=/home/t3 USER=t3 "
+        f"LOGNAME=t3 SHELL=/bin/bash PATH=/home/t3/.local/bin:/usr/local/bin:/usr/bin:/bin sh -c {shlex.quote(inner)}"
+    )
+
+
 def log(msg: str) -> None:
     print(f"[it] {msg}", flush=True)
 
@@ -55,6 +71,11 @@ def log(msg: str) -> None:
 @pytest.fixture(scope="module")
 def controller():
     import modal
+
+    token_file = os.environ.get("T3MODAL_IT_CLAUDE_TOKEN_FILE")
+    assert token_file, "set T3MODAL_IT_CLAUDE_TOKEN_FILE to a file holding a Claude Code OAuth token"
+    claude_token = Path(token_file).read_text().strip()
+    assert claude_token, "the Claude token file is empty"
 
     admin = secrets.token_urlsafe(32)
     modal.Secret.objects.delete("t3modal-admin-it", allow_missing=True)
@@ -72,25 +93,34 @@ def controller():
     app = modal.App.lookup(APP_NAME)
     app_id = app.app_id
     try:
-        yield {"url": url, "admin": admin}
+        yield {"url": url, "admin": admin, "claude_token": claude_token}
     finally:
-        # Stop the app first, so an operation still running can't create a sandbox after the sweep.
-        app.stop()
+        try:
+            sweep(modal, app, app_id)
+        finally:
+            # After the sweep, so a Modal error here can't leave a sandbox running.
+            modal.Secret.objects.delete("t3modal-claude-it", allow_missing=True)
 
-        # Sandbox.list still returns a sandbox for a few seconds after terminate(), so a sandbox
-        # counts as running only while poll() has no exit code.
-        def running():
-            return [sb for sb in modal.Sandbox.list(app_id=app_id) if sb.poll() is None]
 
-        left = running()
-        log(f"teardown: {len(left)} sandbox(es) running in {APP_NAME}")
-        for sb in left:
-            sb.terminate()
-        deadline = time.monotonic() + 60
-        while (after := running()) and time.monotonic() < deadline:
-            time.sleep(2)
-        log(f"teardown: {len(after)} sandbox(es) running after terminate")
-        assert after == [], "sandboxes left running"
+def sweep(modal, app, app_id) -> None:
+    """Stops the app, ends every sandbox in it, and checks that 0 are left."""
+    # Stop the app first, so an operation still running can't create a sandbox after the sweep.
+    app.stop()
+
+    # Sandbox.list still returns a sandbox for a few seconds after terminate(), so a sandbox
+    # counts as running only while poll() has no exit code.
+    def running():
+        return [sb for sb in modal.Sandbox.list(app_id=app_id) if sb.poll() is None]
+
+    left = running()
+    log(f"teardown: {len(left)} sandbox(es) running in {APP_NAME}")
+    for sb in left:
+        sb.terminate()
+    deadline = time.monotonic() + 60
+    while (after := running()) and time.monotonic() < deadline:
+        time.sleep(2)
+    log(f"teardown: {len(after)} sandbox(es) running after terminate")
+    assert after == [], "sandboxes left running"
 
 
 def test_a_machine_created_through_the_controller_serves_t3_through_its_connect_url(controller):
@@ -110,6 +140,15 @@ def test_a_machine_created_through_the_controller_serves_t3_through_its_connect_
 
     assert http("GET", f"{url}/version")[0] == 401
     assert http("GET", f"{url}/version", token="wrong")[0] == 401
+
+    # #16: the Claude token goes into a Secret that every machine created after this gets.
+    claude_token = controller["claude_token"]
+    t_put = time.time()
+    status, put = http("PUT", f"{url}/credentials/claude", token=admin, body={"values": {"CLAUDE_CODE_OAUTH_TOKEN": claude_token}})
+    # pytest prints both sides of a failed assert, so asserts near the token compare redacted text.
+    put = json.dumps(put).replace(claude_token, "[REDACTED]")
+    log(f"PUT /credentials/claude: {status} {put}")
+    assert (status, put) == (200, "{}")
 
     t_create = time.monotonic()
     t_create_wall = time.time()
@@ -263,3 +302,46 @@ def test_a_machine_created_through_the_controller_serves_t3_through_its_connect_
     assert after and after != before
     assert daemon_status()[0] == 200
     assert run("pgrep -c -f /opt/t3modal/init.sh").strip() != "0"
+
+    # #16: T3 has the Claude token and nothing else from the machine's environment.
+    def redact(text: str) -> str:
+        return text.replace(claude_token, "[REDACTED]")
+
+    t3_token = T3_TOKEN
+    names = set(run("tr '\\0' '\\n' </proc/$(cat /home/t3/.t3modal/t3.pid)/environ | cut -d= -f1").split())
+    log(f"T3's environment holds {sorted(names)}")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in names
+    assert names <= {"CLAUDE_CODE_OAUTH_TOKEN", "HOME", "USER", "LOGNAME", "SHELL", "PATH", "PWD", "_"}
+    digest = run(f'tok="{t3_token}"; printf %s "$tok" | sha256sum').split()[0]
+    log(f"T3's token matches the one set: {digest == hashlib.sha256(claude_token.encode()).hexdigest()}")
+    assert digest == hashlib.sha256(claude_token.encode()).hexdigest()
+
+    # Claude Code answers as t3 with T3's environment: env -i drops the exec shell's variables, and a
+    # shell running as t3 reads the token from T3's environ, so it never goes in a command line.
+    t_c = time.monotonic()
+    answer = run(claude_as_t3("claude -p 'Reply with exactly: ok'"))
+    answer = redact(answer).strip()
+    log(f"claude -p as t3 answered {answer[-300:]!r} in {time.monotonic() - t_c:.1f} s")
+    assert (answer.splitlines() or [""])[-1].strip().lower().rstrip(".") == "ok"
+
+    # The token is in no log file and no process's command line. grep -l prints file names only.
+    leaks = run(
+        f'tok="{t3_token}"; printf %s "$tok" | grep -rlFf - /var/log/t3modal; '
+        'printf %s "$tok" | grep -lFf - /proc/[0-9]*/cmdline 2>/dev/null; true'
+    )
+    leaks = redact(leaks).split()
+    log(f"files holding the token: {leaks}")
+    assert leaks == []
+
+    # The controller lists the credential with no value, and deleting it removes the Secret.
+    status, listed = http("GET", f"{url}/credentials", token=admin)
+    listed_has_token = claude_token in json.dumps(listed)
+    assert not listed_has_token
+    log(f"GET /credentials: {status} {listed}")
+    assert status == 200 and [c["kind"] for c in listed["credentials"]] == ["claude"]
+    assert (t_put - 60) * 1000 <= listed["credentials"][0]["setAt"] <= time.time() * 1000
+    assert http("DELETE", f"{url}/credentials/claude", token=admin) == (200, {})
+    assert http("GET", f"{url}/credentials", token=admin) == (200, {"credentials": []})
+    names = [secret.info().name for secret in modal.Secret.objects.list()]
+    log(f"t3modal-claude-it after DELETE: {'t3modal-claude-it' in names}")
+    assert "t3modal-claude-it" not in names

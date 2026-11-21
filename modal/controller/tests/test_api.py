@@ -1,5 +1,6 @@
 """The controller's HTTP API with a fake Cloud in place of Modal (implementation.md §6.3, §9.1, §9.2)."""
 
+import asyncio
 import json
 import secrets
 
@@ -38,6 +39,14 @@ class FakeNonces(dict):
         return True
 
 
+def on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 class FakeCloud:
     """Stands in for Modal. Records each sandbox request and hands out connect tokens."""
 
@@ -46,11 +55,14 @@ class FakeCloud:
         self.fail_connect = fail_connect
         self.created: list[dict] = []
         self.terminated: list[str] = []
+        self.secrets: dict[str, dict] = {}  # kind -> {"values", "setAt"}
+        self.put_error: Exception | None = None
+        self.put_on_event_loop: bool | None = None
 
-    def create_sandbox(self, *, t3_version: str, args: dict, env: dict[str, str]) -> str:
+    def create_sandbox(self, *, t3_version: str, args: dict, env: dict[str, str], credentials: list[str]) -> str:
         if self.fail_with:
             raise RuntimeError(self.fail_with)
-        self.created.append({"t3_version": t3_version, "env": env, **args})
+        self.created.append({"t3_version": t3_version, "env": env, "credentials": credentials, **args})
         return f"sb-{len(self.created)}"
 
     def connect(self, sandbox_id: str, port: int) -> Endpoint:
@@ -60,6 +72,18 @@ class FakeCloud:
 
     def terminate(self, sandbox_id: str) -> None:
         self.terminated.append(sandbox_id)
+
+    def put_credential(self, kind: str, values: dict[str, str]) -> None:
+        self.put_on_event_loop = on_event_loop()
+        if self.put_error:
+            raise self.put_error
+        self.secrets[kind] = {"values": values, "setAt": NOW_MS}
+
+    def credentials(self) -> dict[str, int]:
+        return {kind: s["setAt"] for kind, s in self.secrets.items()}
+
+    def delete_credential(self, kind: str) -> bool:
+        return self.secrets.pop(kind, None) is not None
 
 
 @pytest.fixture
@@ -92,21 +116,22 @@ def create(client, **body):
     return client.post("/machines", json={"name": "dev", "size": "default", "t3Version": "0.1.10", **body}, headers=AUTH)
 
 
-ROUTES = [
-    ("GET", "/version"),
-    ("POST", "/machines"),
-    ("GET", "/machines/m_x"),
-    ("POST", "/machines/m_x/heartbeat"),
-    ("GET", "/ops/op_x"),
-]
+def route_paths(client):
+    """Every (method, path) the API serves, with sample values in the path parameters."""
+    values = {"machine_id": "m_x", "op_id": "op_x", "kind": "claude"}
+    routes = [(m, r.path.format(**values)) for r in client.app.routes if isinstance(r, APIRoute) for m in r.methods]
+    assert len(routes) >= 8
+    return routes
 
 
-@pytest.mark.parametrize(("method", "path"), ROUTES)
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}, {"Authorization": ADMIN}])
-def test_every_route_answers_401_without_the_admin_token(client, method, path, headers):
-    r = client.request(method, path, headers=headers, json={"name": "dev", "size": "default", "t3Version": "0.1.10"})
+def test_every_route_answers_401_without_the_admin_token(client, cloud, headers):
+    put_claude(client)
+    for method, path in route_paths(client):
+        r = client.request(method, path, headers=headers, json={"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN + "2"}})
 
-    assert r.status_code == 401
+        assert r.status_code == 401, (method, path)
+    assert cloud.secrets["claude"]["values"] == {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
 
 
 def test_version_reports_the_controller_revision_and_modal_sdk(client):
@@ -147,6 +172,14 @@ def test_the_sandbox_env_carries_the_machine_id_secret_and_controller_url(client
         "T3MODAL_MACHINE_SECRET": r.json()["machineSecret"],
         "T3MODAL_CONTROLLER_URL": CONTROLLER_URL,
     }
+
+
+def test_a_new_machine_gets_the_credentials_set_when_it_is_created(client, cloud):
+    create(client)
+    put_claude(client)
+    create(client)
+
+    assert [req["credentials"] for req in cloud.created] == [[], ["claude"]]
 
 
 def test_the_sandbox_is_a_mode_b_vm_named_and_tagged_for_its_machine(client, cloud):
@@ -401,12 +434,12 @@ def test_a_machine_secret_is_refused_on_every_route_except_heartbeat_and_operati
     machine_id, secret, _, op_id = a_running_machine(client)
     allowed = {("POST", "/machines/{machine_id}/heartbeat"), ("GET", "/ops/{op_id}")}
     routes = [(m, r.path) for r in client.app.routes if isinstance(r, APIRoute) for m in r.methods]
-    assert len(routes) >= 5
+    assert len(routes) >= 8
 
     for method, template in routes:
         if (method, template) in allowed:
             continue
-        path = template.format(machine_id=machine_id, op_id=op_id)
+        path = template.format(machine_id=machine_id, op_id=op_id, kind="claude")
         body = json.dumps({"name": "x", "size": "small", "t3Version": "0.1.10"}).encode() if method == "POST" else b""
 
         assert signed_request(client, machine_id, secret, method, path, body).status_code == 403, (method, template)
@@ -496,3 +529,118 @@ def test_a_heartbeat_for_a_machine_with_no_state_file_is_404(client):
 )
 def test_the_signed_path_falls_back_when_the_server_gives_no_raw_path(scope, expected):
     assert signed_path(scope) == expected
+
+
+TOKEN = "sk-ant-oat01-" + "x" * 40
+
+
+def put_claude(client, body=None, headers=AUTH):
+    body = {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}} if body is None else body
+    return client.put("/credentials/claude", content=json.dumps(body), headers={**headers, "Content-Type": "application/json"})
+
+
+def test_putting_the_claude_token_stores_it_as_a_secret(client, cloud):
+    r = put_claude(client)
+
+    assert r.status_code == 200
+    assert TOKEN not in r.text
+    assert cloud.secrets == {"claude": {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}, "setAt": NOW_MS}}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"values": {}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": ""}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "ANTHROPIC_API_KEY": TOKEN}},
+        {"values": {"ANTHROPIC_API_KEY": TOKEN}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": 7}},
+        # A token copied from a wrapped terminal line holds spaces, and Anthropic refuses it.
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN[:30] + "  " + TOKEN[30:]}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN + "\n"}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN + "\x00"}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": "   "}},
+        {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN + "é"}},
+        {"values": [TOKEN]},
+        {"value": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}},
+        [TOKEN],
+        TOKEN,
+    ],
+)
+def test_a_bad_credential_body_is_refused_without_echoing_it(client, cloud, body):
+    r = put_claude(client, body)
+
+    assert (r.status_code, r.json()["error"]) == (400, "invalid_credential")
+    assert TOKEN not in r.text
+    assert cloud.secrets == {}
+
+
+def test_a_credential_body_that_is_not_json_is_refused_without_echoing_it(client, cloud):
+    r = client.put("/credentials/claude", content=b"{" + TOKEN.encode(), headers={**AUTH, "Content-Type": "application/json"})
+
+    assert (r.status_code, r.json()["error"]) == (400, "invalid_credential")
+    assert TOKEN not in r.text
+    assert cloud.secrets == {}
+
+
+@pytest.mark.parametrize("content", [json.dumps({"values": {"OPENAI_API_KEY": TOKEN}}), "{" + TOKEN])
+def test_an_unknown_credential_kind_is_not_found(client, cloud, content):
+    r = client.put("/credentials/openai", content=content, headers={**AUTH, "Content-Type": "application/json"})
+
+    assert (r.status_code, r.json()["error"]) == (404, "unknown_credential_kind")
+    assert TOKEN not in r.text
+    assert cloud.secrets == {}
+
+
+def test_listing_credentials_shows_when_each_was_set_and_never_its_value(client):
+    before = client.get("/credentials", headers=AUTH)
+    put_claude(client)
+    after = client.get("/credentials", headers=AUTH)
+
+    assert (before.status_code, before.json()) == (200, {"credentials": []})
+    assert (after.status_code, after.json()) == (200, {"credentials": [{"kind": "claude", "setAt": NOW_MS}]})
+    assert TOKEN not in after.text
+
+
+def test_deleting_a_credential_removes_its_secret(client, cloud):
+    put_claude(client)
+
+    first = client.delete("/credentials/claude", headers=AUTH)
+    again = client.delete("/credentials/claude", headers=AUTH)
+
+    assert (first.status_code, first.json()) == (200, {})
+    assert (again.status_code, again.json()["error"]) == (404, "not_found")
+    assert cloud.secrets == {}
+
+
+def test_deleting_an_unknown_credential_kind_is_not_found(client):
+    r = client.delete("/credentials/openai", headers=AUTH)
+
+    assert (r.status_code, r.json()["error"]) == (404, "unknown_credential_kind")
+
+
+def test_storing_a_credential_runs_off_the_event_loop(client, cloud):
+    put_claude(client)
+
+    assert cloud.put_on_event_loop is False
+
+
+def test_a_cloud_error_while_storing_a_credential_is_not_called_a_bad_body(client, cloud):
+    cloud.put_error = ValueError("Modal refused the Secret")
+
+    with pytest.raises(ValueError, match="Modal refused the Secret"):
+        put_claude(client)
+
+
+def test_a_body_that_is_not_utf8_is_refused(client, cloud):
+    r = client.put("/credentials/claude", content=b'{"values": {"CLAUDE_CODE_OAUTH_TOKEN": "\xff"}}', headers={**AUTH, "Content-Type": "application/json"})
+
+    assert (r.status_code, r.json()["error"]) == (400, "invalid_credential")
+    assert cloud.secrets == {}
+
+
+def test_putting_a_credential_again_replaces_it(client, cloud):
+    put_claude(client)
+    put_claude(client, {"values": {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN + "2"}})
+
+    assert cloud.secrets["claude"]["values"] == {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN + "2"}

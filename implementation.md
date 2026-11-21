@@ -357,8 +357,8 @@ Authentication:
 | `POST /machines/{id}/import` `{images}` | laptop | Rebuilds a lost state file |
 | `GET /usage?since=<unix>` | laptop | Dollars per machine from `costByDay`, plus an estimate for hours the stats don't cover yet. Includes machines deleted this month |
 | `GET /budget`, `PUT /budget` `{monthlyUsd}` | laptop | Reads or sets the monthly budget |
-| `PUT /credentials/{kind}` `{values}` | laptop | Creates or replaces the Secret `t3modal-<kind>`, where kind is `github` or `claude`. The `github` Secret also holds the commit name and email (§12.2). Values travel in the HTTPS body, never on a command line |
-| `DELETE /credentials/{kind}` | laptop | Deletes that Secret |
+| `PUT /credentials/{kind}` `{values}` | laptop | Creates or replaces the Secret `t3modal-<kind>`, where kind is `github` or `claude`. `values` must hold exactly the kind's keys: `CLAUDE_CODE_OAUTH_TOKEN` for `claude`, which must be printable ASCII with no spaces. A token copied from a wrapped terminal line holds spaces, and Anthropic refuses it. The `github` Secret also holds the commit name and email (§12.2). Values travel in the HTTPS body, never on a command line. An unknown kind gets 404 and a bad body gets 400, and neither answer repeats the body |
+| `DELETE /credentials/{kind}` | laptop | Deletes that Secret, or answers 404 if it isn't set |
 | `GET /credentials` | laptop | Which kinds exist and when they were set. Never returns values |
 | `GET /ops/{opId}` | laptop, daemon | Status of a long operation. A daemon may read only its own machine's operations |
 
@@ -405,7 +405,7 @@ The machine secret is used in two places:
 
 The secret is the hex HMAC-SHA256 of the machine id. The controller derives it whenever it needs it and never stores it. A signed request carries the headers `X-T3modal-Machine`, `X-T3modal-Timestamp` in unix seconds, `X-T3modal-Nonce` of 16 to 64 hex characters, and `X-T3modal-Signature`. The signature is the hex HMAC-SHA256 of these lines joined by newlines: `v1`, the method, the path with its query string, the timestamp, the nonce, and the hex SHA-256 of the body. `packages/shared/fixtures/signed-request.json` holds a test vector that the controller and the daemon both check. The controller records each nonce in the Dict `t3modal-nonces` with `put(skip_if_exists=True)`, so two containers can't both accept one nonce. A refusal answers 401 with a `reason`: `malformed`, `clock_skew`, `bad_signature` or `reused_nonce`.
 
-The sandbox gets `T3MODAL_MACHINE_ID`, `T3MODAL_MACHINE_SECRET` and `T3MODAL_CONTROLLER_URL` in its environment. `init.sh` starts T3 with `setpriv --reset-env`, so T3 doesn't inherit them.
+The sandbox gets `T3MODAL_MACHINE_ID`, `T3MODAL_MACHINE_SECRET` and `T3MODAL_CONTROLLER_URL` in its environment. `init.sh` passes T3 only the credential variables (§11.3), so T3 doesn't inherit them.
 
 A machine secret allows actions on that machine only: sleep, heartbeat and reading its own operations. It can't wake machines, read credentials, change the budget or delete anything. The controller lists the routes a machine secret may call and answers 403 on every other route, so a new route stays closed to machines unless it is added to that list.
 
@@ -451,13 +451,13 @@ base = (modal.Image.debian_slim(python_version="3.12")
    - `node ~/.t3modal/daemon.mjs`, or `/opt/t3modal/daemon.mjs` before the first provisioning. It restarts on exit, so an upgraded daemon replaces itself without restarting T3.
    - `dockerd`, as root, in the background. T3 doesn't wait for it. The user `t3` is in the `docker` group.
 
-   Each loop records its process's PID in `~/.t3modal/<name>.pid`. The daemon inherits the supervisor's environment, which holds `T3MODAL_MACHINE_ID`, `T3MODAL_MACHINE_SECRET`, `T3MODAL_CONTROLLER_URL` and Modal's `MODAL_SANDBOX_ID`. T3 starts with `setpriv --reset-env`, so its agents don't get the machine secret by accident. They run as `t3` with `sudo`, so this isn't a security boundary. The supervisor never puts a secret in a command's arguments.
+   Each loop records its process's PID in `~/.t3modal/<name>.pid`. The daemon inherits the supervisor's environment, which holds `T3MODAL_MACHINE_ID`, `T3MODAL_MACHINE_SECRET`, `T3MODAL_CONTROLLER_URL` and Modal's `MODAL_SANDBOX_ID`. T3 gets none of the supervisor's environment except `CLAUDE_CODE_OAUTH_TOKEN` (§11.3), so its agents don't get the machine secret by accident. They run as `t3` with `sudo`, so this isn't a security boundary. The supervisor never puts a secret in a command's arguments.
 
 `init.sh` never exits, because the sandbox ends without a snapshot when its first process exits. A crashing loop retries with backoff. The 24-hour timeout bounds the cost.
 
 The daemon stops T3 by the PID the loop records, never by matching command text. In Phase 0, `pkill -f 't3 serve'` also matched the sandbox's own start command and ended the sandbox.
 
-`init.sh` leaves `ANTHROPIC_API_KEY` unset, because it outranks `CLAUDE_CODE_OAUTH_TOKEN` in Claude Code.
+T3 never gets `ANTHROPIC_API_KEY`, even if a Secret sets it, because it outranks `CLAUDE_CODE_OAUTH_TOKEN` in Claude Code.
 
 ### 7.3 The daemon: `apps/daemon`
 
@@ -714,6 +714,10 @@ Copying the laptop's own Claude login is rejected. On macOS it lives in the Keyc
 At each boot, `init.sh` applies each account's mode:
 - **All machines.** It exports the Secret's variables to T3.
 - **This machine.** It doesn't export them, so the machine's own sign-in on disk applies.
+
+The controller attaches every credential Secret that exists when it creates a sandbox. `init.sh` unsets every variable except `CLAUDE_CODE_OAUTH_TOKEN` before it starts T3, so T3 gets the token and nothing else from the sandbox's environment. It handles variable names only, so no value reaches a command line. A `PUT /credentials/{kind}` deletes the Secret and creates it again, so the Secret's creation time is the time it was set. This leaves 2 races, both rare with one user:
+- A machine created while a `PUT` or `DELETE` runs can start without the credential. It can also fail to start, if the Secret disappears between the controller listing it and Modal attaching it. Creating the machine again fixes both.
+- Of 2 `PUT`s at once, the second can fail with 500 and leave the first one's value. Sending it again fixes it. #16 builds "all machines" for Claude Code. "This machine" mode is #32.
 
 After a change, the daemon asks T3 to refresh its providers with `server.refreshProviders`.
 

@@ -5,15 +5,17 @@ only the routes in MACHINE_ROUTES, and only for its own machine. Every other rou
 """
 
 import hmac
+import json
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
-from .controller import Cloud, Controller, InvalidT3Version
+from .controller import Cloud, Controller, InvalidCredential, InvalidT3Version, UnknownCredentialKind, credential_keys
 from .machines import StaleSandbox
 from .signing import Nonces, Refused, check
 from .sizes import UnknownSize
@@ -172,6 +174,40 @@ def create_api(
             )
         except StaleSandbox as e:
             return JSONResponse({"error": "stale_sandbox", "message": str(e)}, status_code=409)
+        if not found:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return {}
+
+    @api.get("/credentials")
+    def list_credentials():
+        return {"credentials": controller.credentials()}
+
+    @api.put("/credentials/{kind}")
+    async def put_credential(kind: str, request: Request):
+        # The body is read here rather than by a model, because FastAPI's 422 answer repeats the input.
+        try:
+            credential_keys(kind)
+        except UnknownCredentialKind:
+            return JSONResponse({"error": "unknown_credential_kind"}, status_code=404)
+        try:
+            body = json.loads(await request.body())
+        except ValueError:  # JSONDecodeError and UnicodeDecodeError, whose messages quote the body
+            return JSONResponse({"error": "invalid_credential", "message": "the body is not JSON"}, status_code=400)
+        try:
+            if not isinstance(body, dict) or "values" not in body:
+                raise InvalidCredential('the body must be {"values": {...}}')
+            # Modal's Secret calls block, so they run in a worker thread, as a sync route's would.
+            await run_in_threadpool(controller.put_credential, kind, body["values"])
+        except InvalidCredential as e:
+            return JSONResponse({"error": "invalid_credential", "message": str(e)}, status_code=400)
+        return {}
+
+    @api.delete("/credentials/{kind}")
+    def delete_credential(kind: str):
+        try:
+            found = controller.delete_credential(kind)
+        except UnknownCredentialKind:
+            return JSONResponse({"error": "unknown_credential_kind"}, status_code=404)
         if not found:
             return JSONResponse({"error": "not_found"}, status_code=404)
         return {}
